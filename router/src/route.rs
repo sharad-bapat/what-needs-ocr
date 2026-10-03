@@ -30,6 +30,9 @@ pub struct Route {
     pub index: usize,
     pub decision: &'static str,
     pub confidence: f64,
+    /// An image's effective resolution (pixels per inch, the coarser side), so a crop can be read at the
+    /// image's own resolution; 0 for vectors and words.
+    pub dpi: f64,
     pub reasons: Vec<(&'static str, f64)>,
 }
 
@@ -110,7 +113,7 @@ pub fn route_page(bytes: &[u8], page: &Page) -> Vec<Route> {
         };
         let k = thumb.map(|t| kind::classify(t.w, t.h, &t.grey)).map(|k| (k.kind, k.confidence, k.has_text));
         let (decision, confidence, reasons) = image_decision(r, k);
-        out.push(Route { x0: r.x0, y0: r.y0, x1: r.x1, y1: r.y1, source: "image", index: r.image, decision, confidence, reasons });
+        out.push(Route { x0: r.x0, y0: r.y0, x1: r.x1, y1: r.y1, source: "image", index: r.image, decision, confidence, dpi: r.dpi, reasons });
     }
     // outlined text comes as many small clusters (a word, a letter): grouped into blocks like lines of
     // words, so a short word regions didn't call letters is covered by its neighbours' block
@@ -125,7 +128,7 @@ pub fn route_page(bytes: &[u8], page: &Page) -> Vec<Route> {
     for b in blocks(&boxes, 1.5) {
         let n = boxes.iter().filter(|v| v[0] >= b[0] && v[2] <= b[2] && v[1] >= b[1] && v[3] <= b[3]).count();
         out.push(Route { x0: b[0], y0: b[1], x1: b[2], y1: b[3], source: "vector", index: n, decision: "ocr",
-                         confidence: conf, reasons: vec![("outlined_clusters", n as f64)] });
+                         confidence: conf, dpi: 0.0, reasons: vec![("outlined_clusters", n as f64)] });
     }
     let shown = |w: &&regions::Word| !(w.invisible || w.white || w.hidden || w.offpage);
     let mut fonts: Vec<u32> = page.words.iter().filter(shown).map(|w| w.font).collect();
@@ -138,7 +141,7 @@ pub fn route_page(bytes: &[u8], page: &Page) -> Vec<Route> {
         if share < GARBAGE { continue; }
         for b in blocks(&bad, 1.5) {
             out.push(Route { x0: b[0], y0: b[1], x1: b[2], y1: b[3], source: "words", index: f as usize, decision: "ocr",
-                             confidence: share, reasons: vec![("undecodable", share), ("font_words", ws.len() as f64)] });
+                             confidence: share, dpi: 0.0, reasons: vec![("undecodable", share), ("font_words", ws.len() as f64)] });
         }
     }
     out
