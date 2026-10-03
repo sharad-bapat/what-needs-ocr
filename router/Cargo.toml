@@ -1,0 +1,16 @@
+[package]
+name = "router"
+version = "0.1.0"
+edition = "2021"
+description = "What needs OCR? Which parts of a born-digital PDF page only exist as pixels, routed from the page map of where-are-the-regions."
+license = "MIT"
+
+[dependencies]
+# The page map: every word, image, path and annotation a page draws, with its box and kind.
+regions = { path = "../../where-are-the-regions/regions" }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
