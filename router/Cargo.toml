@@ -12,6 +12,8 @@ path = "src/main.rs"
 [dependencies]
 # The page map: every word, image, path and annotation a page draws, with its box and kind.
 regions = { path = "../../where-are-the-regions/regions" }
+# Reading the OCR results tools/ocr_crops.py writes, for --merge.
+serde_json = "1"
 
 [profile.release]
 opt-level = 3

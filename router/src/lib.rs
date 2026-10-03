@@ -5,6 +5,7 @@
 
 pub use regions;
 
+pub mod merge;
 pub mod route;
 
 #[cfg(test)]
