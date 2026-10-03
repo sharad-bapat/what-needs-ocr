@@ -6,6 +6,10 @@ known box; what is pasted decides what OCR should find there:
   text        a crop of another contract page, rasterised: its words are the truth for that box
   text_ocr    the same, with Tesseract's invisible text layer on it (control: the layer is already there)
   full_scan   the whole page rasterised, image only: every word on it is truth
+  outlined    a crop's words redrawn as glyph outlines (Vera, the font reportlab ships), one filled path
+              per letter, as converters that outline text do: no text layer, so OCR must read them
+  garbled     a crop's words redrawn as real Helvetica text with a ToUnicode map that sends every code to
+              a private-use or a control character: the page looks right but its text layer is garbage
   photo       smooth random blobs, no text (negative)
   logo        flat geometric shapes, no letters (negative)
   blank       a blank scanned sheet: paper grey plus noise (negative)
@@ -13,14 +17,16 @@ known box; what is pasted decides what OCR should find there:
 
 The truth for a pasted crop is the source page's words that lie wholly inside the crop, moved into the
 new page: scaled to the box and turned by the scan's small rotation, each given as the axis-aligned box
-of its turned corners. Words the crop edge cuts are left out of the truth and listed as "cut" boxes,
+of its turned corners. For outlined and garbled text the crop's words are redrawn at their places, each
+sized to fit its own box, and the truth box is the line-height box of what was drawn. Words the crop edge cuts are left out of the truth and listed as "cut" boxes,
 since part of each shows in the image and an OCR engine may read it or not. Each case also lists the
 file's own words (the page's digital text, as PyMuPDF reads it before anything is pasted), so a case's
 whole truth is file_words plus every region's words.
 
 Placement, wraps (one image, strips, a form XObject, an inline image) and scanner damage (DPI, JPEG or
 lossless, greyscale or bitonal, noise, a rotation of up to 1.5 degrees) follow where-are-the-regions'
-tools/build_set.py, which this is adapted from. The split (tune or held-out) is by the same hash of the
+tools/build_set.py, which this is adapted from; the outline pen follows its tools/build_vectors.py, and
+the ToUnicode writer wordbox's tools/garble.py. The split (tune or held-out) is by the same hash of the
 source file, so the held-out sources are where-are-the-regions' held-out sources too.
 
 Boxes are in PDF points with the origin at the top left of the page (PyMuPDF's convention).
@@ -41,13 +47,18 @@ from pathlib import Path
 
 import fitz
 import numpy as np
+import reportlab
+from fontTools.pens.basePen import BasePen
+from fontTools.ttLib import TTFont
 from PIL import Image, ImageDraw, ImageFilter
 
 SEED = 20261003
-KINDS = ["text"] * 8 + ["text_ocr"] * 2 + ["full_scan"] * 2 + ["photo", "logo", "blank", "control"]
+KINDS = ["text"] * 8 + ["text_ocr"] * 2 + ["full_scan"] * 2 + ["outlined"] * 2 + ["garbled"] * 2 + ["photo", "logo", "blank", "control"]
 WRAPS = ["image", "image", "strips", "form", "inline"]
 DPIS = [150, 200, 300]
 MIN_WORDS = 25  # a text crop must hold at least this many whole words from its source
+VERA = Path(reportlab.__file__).parent / "fonts" / "Vera.ttf"
+CONTROL = [c for c in range(1, 32) if c not in (9, 10, 13)]
 
 
 def split_of(source):
@@ -232,6 +243,97 @@ def ocr_pdf(img, dpi):
         return fitz.open(Path(tmp) / "o.pdf").tobytes()
 
 
+# ---- redrawn text ---------------------------------------------------------------------------
+
+def fit(box, width1, asc, desc):
+    """A word redrawn in its box: the size that fits its height and width (width1 is the width at size 1,
+    asc and desc the font's per-em ascent and descent), its baseline, and the line-height box it gets."""
+    x0, y0, x1, y1 = box
+    size_h = (y1 - y0) / (asc - desc)
+    size = min(size_h, (x1 - x0) / width1) if width1 > 0 else size_h
+    base = y1 + desc * size_h
+    return size, base, [round(x0, 2), round(base - asc * size, 2), round(x0 + width1 * size, 2), round(base - desc * size, 2)]
+
+
+class ShapePen(BasePen):
+    """Glyph outlines into a PyMuPDF shape, in page coordinates (y down), quadratics as cubics."""
+
+    def __init__(self, glyphset, shape, scale, x, base):
+        super().__init__(glyphset)
+        self.sh, self.s, self.x, self.base, self.cur, self.start = shape, scale, x, base, None, None
+
+    def _pt(self, pt):
+        return fitz.Point(self.x + pt[0] * self.s, self.base - pt[1] * self.s)
+
+    def _moveTo(self, pt):
+        self.cur = self.start = self._pt(pt)
+
+    def _lineTo(self, pt):
+        q = self._pt(pt)
+        self.sh.draw_line(self.cur, q)
+        self.cur = q
+
+    def _curveToOne(self, a, b, c):
+        q = self._pt(c)
+        self.sh.draw_bezier(self.cur, self._pt(a), self._pt(b), q)
+        self.cur = q
+
+    def _closePath(self):
+        if self.cur != self.start:
+            self.sh.draw_line(self.cur, self.start)
+        self.cur = self.start
+
+
+def draw_outlined(page, words, font):
+    """Each word's letters as filled paths, one per letter; returns the truth words."""
+    gs, cmap, upm = font.getGlyphSet(), font.getBestCmap(), font["head"].unitsPerEm
+    asc, desc = font["hhea"].ascent / upm, font["hhea"].descent / upm
+    truth = []
+    for x0, y0, x1, y1, text in words:
+        glyphs = [cmap.get(ord(ch)) for ch in text]
+        width1 = sum(gs[g].width for g in glyphs if g) / upm
+        size, base, tbox = fit((x0, y0, x1, y1), width1, asc, desc)
+        x = x0
+        for g in glyphs:
+            if not g:
+                continue
+            sh = page.new_shape()
+            gs[g].draw(ShapePen(gs, sh, size / upm, x, base))
+            sh.finish(fill=(0, 0, 0), color=None, even_odd=False, closePath=False)
+            sh.commit()
+            x += gs[g].width * size / upm
+        truth.append(tbox + [text])
+    return truth
+
+
+def draw_garbled(doc, page, words, variant):
+    """Each word as Helvetica text, then the font's ToUnicode sends every code to garbage; returns the
+    truth words."""
+    helv = fitz.Font("helv")
+    truth = []
+    for x0, y0, x1, y1, text in words:
+        size, base, tbox = fit((x0, y0, x1, y1), helv.text_length(text, fontsize=1), helv.ascender, helv.descender)
+        page.insert_text((x0, base), text, fontname="helv", fontsize=size)
+        truth.append(tbox + [text])
+    xref = next(f[0] for f in page.get_fonts(full=True) if f[4] == "helv")
+    garbage = {c: chr(0xE000 + c) if variant == "pua" else chr(CONTROL[c % len(CONTROL)]) for c in range(32, 256)}
+    lines = ["/CIDInit /ProcSet findresource begin", "12 dict begin", "begincmap",
+             "/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def",
+             "/CMapName /Adobe-Identity-UCS def", "/CMapType 2 def", "1 begincodespacerange", "<00> <FF>", "endcodespacerange"]
+    items = sorted(garbage.items())
+    for i in range(0, len(items), 100):
+        chunk = items[i:i + 100]
+        lines.append(f"{len(chunk)} beginbfchar")
+        lines += [f"<{c:02X}> <{s.encode('utf-16-be').hex().upper()}>" for c, s in chunk]
+        lines.append("endbfchar")
+    lines += ["endcmap", "CMapName currentdict /CMap defineresource pop", "end", "end"]
+    cm = doc.get_new_xref()
+    doc.update_object(cm, "<<>>")
+    doc.update_stream(cm, "\n".join(lines).encode("latin-1"))
+    doc.xref_set_key(xref, "ToUnicode", f"{cm} 0 R")
+    return truth
+
+
 # ---- cases ------------------------------------------------------------------------------------
 
 def build_case(rng, i, src, pno, pool_pages):
@@ -275,6 +377,22 @@ def build_case(rng, i, src, pno, pool_pages):
     bitonal = rng.random() < 0.25
     wrap = rng.choice(WRAPS)
     case.update(placement=how, wrap=wrap, dpi=dpi, jpeg=jpeg, frac=frac, file_words=words_of(page)[0])
+
+    if kind in ("outlined", "garbled"):
+        got = text_crop(rng, pool_pages, w, h)
+        if not got:
+            return None, None
+        sp, clip, inside, cut = got
+        words = [move(t[:4], clip, box, 0) + [t[4]] for t in inside]
+        if kind == "outlined":
+            truth = draw_outlined(page, words, TTFont(VERA))
+            case.update(wrap="paths", dpi=None, jpeg=None)
+        else:
+            variant = rng.choice(["pua", "control"])
+            truth = draw_garbled(out, page, words, variant)
+            case.update(wrap="text", variant=variant, dpi=None, jpeg=None)
+        case["regions"].append({"box": [round(v, 2) for v in box], "expect": "ocr", "why": kind, "words": truth, "cut": []})
+        return out, case
 
     if kind in ("text", "text_ocr"):
         got = text_crop(rng, pool_pages, w, h)
