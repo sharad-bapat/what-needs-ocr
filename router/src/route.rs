@@ -4,7 +4,8 @@
 //!   image   every image the page draws. `text_layer` when invisible words cover it (an OCR layer: it's
 //!           been read already); otherwise its structure score from regions (size, pixels, DPI, visible
 //!           text over it) times its pixel evidence that it holds text, `ocr` at or above CUT and `skip`
-//!           below. An inline image's pixels aren't read by regions, so it's judged on structure alone.
+//!           below. An image whose pixels can't be read (a codec regions doesn't decode, a colour space
+//!           named from the page's resources) is judged on structure alone.
 //!   vector  a cluster of paths regions calls outlined text: letters drawn as shapes. Always `ocr`.
 //!   words   a font's text layer that doesn't decode: when at least half of a font's visible words hold
 //!           unmapped, control, private-use or U+FFFD characters, its undecodable words are grouped into
@@ -100,7 +101,9 @@ pub fn route_page(bytes: &[u8], page: &Page) -> Vec<Route> {
     for r in &page.regions {
         let img = &page.images[r.image];
         let objs: Vec<u32> = img.pieces.iter().map(|q| q.0).filter(|&o| o != 0).collect();
-        let thumb = if objs.is_empty() { None } else if img.pieces.len() > 1 {
+        let thumb = if let Some(src) = &img.inline_src {
+            pixels::inline_thumbnail(&src.0, &src.1, kind::KIND_THUMB).ok()
+        } else if objs.is_empty() { None } else if img.pieces.len() > 1 {
             pixels::merged_thumbnail(bytes, &img.pieces, kind::KIND_THUMB).ok()
         } else {
             pixels::image_thumbnail_max(bytes, objs[0], kind::KIND_THUMB).ok()
@@ -157,7 +160,7 @@ mod tests {
         assert_eq!(image_decision(&region(0.8, 0.0), Some(("photo", 0.9, 0.0))).0, "skip");
         // an OCR layer over it: already read
         assert_eq!(image_decision(&region(0.1, 0.9), Some(("text", 0.9, 1.0))).0, "text_layer");
-        // no pixels (an inline image): structure alone
+        // no pixels (an image that doesn't decode): structure alone
         let (d, c, r) = image_decision(&region(0.8, 0.0), None);
         assert!(d == "ocr" && (c - 0.8).abs() < 1e-9 && r.iter().any(|x| x.0 == "no_pixels"));
     }
