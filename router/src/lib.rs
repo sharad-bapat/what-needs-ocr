@@ -5,6 +5,8 @@
 
 pub use regions;
 
+pub mod route;
+
 #[cfg(test)]
 mod tests {
     #[test]

@@ -5,6 +5,10 @@ edition = "2021"
 description = "What needs OCR? Which parts of a born-digital PDF page only exist as pixels, routed from the page map of where-are-the-regions."
 license = "MIT"
 
+[[bin]]
+name = "router-cli"
+path = "src/main.rs"
+
 [dependencies]
 # The page map: every word, image, path and annotation a page draws, with its box and kind.
 regions = { path = "../../where-are-the-regions/regions" }
