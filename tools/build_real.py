@@ -29,7 +29,7 @@ Boxes are in points from the top left of the page as displayed (after /Rotate), 
 Tesseract runs as tools/ocr_crops.py runs it, cached the same way.
 
 usage: python tools/build_real.py <govdocs1 dir> <thread> [seed]      writes data/real/<thread>.json
-The thread's split is in the manifest: 005 is tune, 006 is held out.
+The thread's split is in the manifest: 005 is tune, 006 is held out, 007 is fresh (for changes after the held-out run).
 """
 import hashlib
 import json
@@ -47,7 +47,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ocr_crops import ARGS, CACHE, read, tesseract_version, turned  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-SPLITS = {"005": "tune", "006": "heldout"}
+# 007 tests a change made after the held-out run on 006 (results/after-heldout.md)
+SPLITS = {"005": "tune", "006": "heldout", "007": "fresh"}
 SEED = 20261004
 DPI = 400
 MIN_WORDS = 20
