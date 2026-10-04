@@ -1,0 +1,20 @@
+[package]
+name = "router-wasm"
+version = "0.1.0"
+edition = "2021"
+description = "The browser build of What needs OCR?: a PDF's routes, and its merged words from crops read elsewhere, as JSON. A separate crate, so the frozen router stays untouched."
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+router = { path = "../router" }
+wasm-bindgen = "0.2"
+serde_json = "1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
