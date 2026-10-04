@@ -3,7 +3,8 @@
 //!   file            a visible word the file gives as text
 //!   file_ocr_layer  a word of an invisible text layer already in the file (an earlier OCR); kept as it
 //!                   is, since the router doesn't send it to OCR again
-//!   ocr             a word OCR read in a crop, with OCR's confidence (0 to 1)
+//!   ocr             a word OCR read in a crop, with OCR's confidence (0 to 1); words under MIN_CONF are
+//!                   left out
 //!
 //! Words nobody sees are left out: off the page, hidden by a clip, or painted white. A file word that
 //! doesn't decode is dropped when it lies in a crop made for undecodable words, since OCR read that
@@ -49,7 +50,14 @@ fn holds(b: &BoxPt, p: (f64, f64), grow: f64) -> bool {
 
 fn letters(s: &str) -> String { s.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect() }
 
-pub fn merge(file: &[FileWord], crops: &[Crop]) -> Vec<Word> {
+/// The default OCR-confidence cutoff, 0 to 1: OCR words below it are left out of the merged list. Chosen on
+/// tune data after the held-out runs: the lowest summed word error over the constructed tune split and
+/// govdocs1 005 with region recall kept at 98% or more (0.5: 0.45% and 1.25%, against 0.47% and 1.44% with
+/// no cutoff). router-cli --min-conf 0 keeps every OCR word.
+pub const MIN_CONF: f64 = 0.5;
+
+/// The merged word list; OCR words with a confidence under `min_conf` (0 to 1) are left out.
+pub fn merge(file: &[FileWord], crops: &[Crop], min_conf: f64) -> Vec<Word> {
     let mut out: Vec<Word> = Vec::new();
     for w in file {
         if w.unseen || w.text.trim().is_empty() { continue; }
@@ -60,7 +68,7 @@ pub fn merge(file: &[FileWord], crops: &[Crop]) -> Vec<Word> {
     for (k, c) in crops.iter().enumerate() {
         for (b, text, conf) in &c.words {
             let t = text.trim();
-            if t.is_empty() { continue; }
+            if t.is_empty() || conf / 100.0 < min_conf { continue; }
             let p = centre(b);
             if out[..kept_file].iter().any(|f| holds(&f.b, p, 1.0)) { continue; }
             if out[kept_file..].iter().any(|o| holds(&o.b, p, 0.0) && letters(&o.text) == letters(t)) { continue; }
@@ -85,7 +93,7 @@ mod tests {
         let file = [fw("Signed", [100.0, 100.0, 140.0, 112.0])];
         let crops = [Crop { b: [90.0, 90.0, 300.0, 200.0], source: "image".into(),
                             words: vec![([101.0, 101.0, 139.0, 111.0], "Signed".into(), 96.0), ([150.0, 150.0, 200.0, 162.0], "Witness".into(), 91.0)] }];
-        let m = merge(&file, &crops);
+        let m = merge(&file, &crops, 0.0);
         assert_eq!(m.len(), 2);
         assert!(m[0].source == "file" && m[0].text == "Signed");
         assert!(m[1].source == "ocr" && m[1].text == "Witness" && (m[1].confidence - 0.91).abs() < 1e-9 && m[1].crop == Some(0));
@@ -98,7 +106,7 @@ mod tests {
         let mut far = fw("\u{e043}", [10.0, 400.0, 30.0, 412.0]);
         far.undecodable = true;
         let crops = [Crop { b: [8.0, 8.0, 60.0, 24.0], source: "words".into(), words: vec![([10.0, 10.0, 40.0, 22.0], "AB".into(), 88.0)] }];
-        let m = merge(&[bad, far], &crops);
+        let m = merge(&[bad, far], &crops, 0.0);
         // the garbled word inside the crop is replaced; the one outside every crop stays as the file gives it
         assert_eq!(m.iter().map(|w| (w.text.as_str(), w.source)).collect::<Vec<_>>(), [("\u{e043}", "file"), ("AB", "ocr")]);
     }
@@ -109,8 +117,17 @@ mod tests {
         white.unseen = true;
         let mut layer = fw("scanned", [20.0, 20.0, 60.0, 30.0]);
         layer.invisible = true;
-        let m = merge(&[white, layer], &[]);
+        let m = merge(&[white, layer], &[], 0.0);
         assert!(m.len() == 1 && m[0].source == "file_ocr_layer");
+    }
+
+    #[test]
+    fn ocr_words_under_the_cutoff_are_left_out() {
+        let crops = [Crop { b: [0.0, 0.0, 300.0, 100.0], source: "image".into(),
+                            words: vec![([10.0, 10.0, 50.0, 22.0], "Clear".into(), 92.0), ([60.0, 10.0, 90.0, 22.0], "~~e".into(), 31.0)] }];
+        assert_eq!(merge(&[], &crops, 0.0).len(), 2);
+        let m = merge(&[], &crops, 0.6);
+        assert!(m.len() == 1 && m[0].text == "Clear");
     }
 
     #[test]
@@ -118,6 +135,6 @@ mod tests {
         let w = ([50.0, 50.0, 90.0, 62.0], "Clause".to_string(), 90.0);
         let crops = [Crop { b: [0.0, 0.0, 100.0, 100.0], source: "image".into(), words: vec![w.clone()] },
                      Crop { b: [40.0, 40.0, 200.0, 100.0], source: "vector".into(), words: vec![([51.0, 50.5, 90.0, 62.0], "clause".into(), 80.0)] }];
-        assert_eq!(merge(&[], &crops).len(), 1);
+        assert_eq!(merge(&[], &crops, 0.0).len(), 1);
     }
 }

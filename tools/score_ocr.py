@@ -45,6 +45,7 @@ ROOT = Path(__file__).resolve().parent.parent
 CLI = ROOT / "router" / "target" / "release" / "router-cli.exe"
 SET = ROOT / "data" / "constructed"
 METHODS = ["routed", "every page", "skip text", "file text"]
+MIN_CONF = []  # ["--min-conf", "<x>"] from --min-conf=<x>: the merge's OCR-confidence cutoff, for the routed list
 
 
 def norm(s):
@@ -64,7 +65,7 @@ def merged(files, ocr):
     with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8") as f:
         f.write("\n".join(str(p.resolve()).replace("\\", "/") for p in files))
         lst = f.name
-    out = subprocess.run([str(CLI), "--merge", str(ocr), "--list", lst], capture_output=True, text=True, encoding="utf-8", check=True).stdout
+    out = subprocess.run([str(CLI), "--merge", str(ocr), *MIN_CONF, "--list", lst], capture_output=True, text=True, encoding="utf-8", check=True).stdout
     Path(lst).unlink()
     res = {}
     for d in map(json.loads, out.splitlines()):
@@ -126,6 +127,8 @@ def area_share(boxes, w, h, step=4.0):
 
 def main():
     opt = dict(a[2:].split("=", 1) for a in sys.argv[1:] if a.startswith("--") and "=" in a)
+    if "min-conf" in opt:
+        MIN_CONF[:] = ["--min-conf", opt["min-conf"]]
     if "real" in opt:
         # the real set: one thread's picked pages, against its reference (data/real/<thread>.json)
         thread, root = opt["real"], Path(opt["root"])

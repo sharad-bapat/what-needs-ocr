@@ -3,11 +3,11 @@
 //!
 //! usage: router-cli <file.pdf>...
 //!        router-cli --list <list.txt>     one path per line
-//!        router-cli --merge <ocr.jsonl> (<file.pdf>... | --list <list.txt>)
+//!        router-cli --merge <ocr.jsonl> [--min-conf <0 to 1>] (<file.pdf>... | --list <list.txt>)
 
 use std::collections::HashMap;
 
-use router::merge::{merge, Crop, FileWord};
+use router::merge::{merge, Crop, FileWord, MIN_CONF};
 use router::route::{route_page, undecodable};
 use regions::json_str;
 
@@ -58,7 +58,7 @@ fn read_ocr(path: &str) -> HashMap<String, HashMap<u64, Vec<Crop>>> {
     out
 }
 
-fn merged_json(path: &str, ocr: &HashMap<String, HashMap<u64, Vec<Crop>>>) -> String {
+fn merged_json(path: &str, ocr: &HashMap<String, HashMap<u64, Vec<Crop>>>, min_conf: f64) -> String {
     let bytes = match std::fs::read(path) {
         Ok(b) => b,
         Err(e) => return format!("{{\"file\":{},\"status\":{}}}", json_str(path), json_str(&e.to_string())),
@@ -72,7 +72,7 @@ fn merged_json(path: &str, ocr: &HashMap<String, HashMap<u64, Vec<Crop>>>) -> St
         }).collect();
         let none = Vec::new();
         let crops = found.and_then(|f| f.get(&(p.n as u64))).unwrap_or(&none);
-        let words: Vec<String> = merge(&file, crops).iter().map(|w| format!(
+        let words: Vec<String> = merge(&file, crops, min_conf).iter().map(|w| format!(
             "{{\"t\":{},\"x0\":{},\"y0\":{},\"x1\":{},\"y1\":{},\"source\":\"{}\",\"confidence\":{}{}}}",
             json_str(&w.text), r2(w.b[0]), r2(w.b[1]), r2(w.b[2]), r2(w.b[3]), w.source, r2(w.confidence),
             w.crop.map(|c| format!(",\"crop\":{c}")).unwrap_or_default())).collect();
@@ -90,6 +90,13 @@ fn main() {
     } else {
         None
     };
+    let min_conf = if args.first().map(|a| a == "--min-conf").unwrap_or(false) {
+        let v: f64 = args.get(1).and_then(|v| v.parse().ok()).expect("--min-conf needs a number from 0 to 1");
+        args.drain(0..2);
+        v
+    } else {
+        MIN_CONF
+    };
     let files: Vec<String> = if args.first().map(|a| a == "--list").unwrap_or(false) {
         let list = std::fs::read_to_string(args.get(1).expect("--list needs a file")).expect("can't read the list");
         list.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect()
@@ -97,10 +104,10 @@ fn main() {
         args
     };
     if files.is_empty() {
-        eprintln!("usage: router-cli <file.pdf>... | router-cli --list <list.txt> | router-cli --merge <ocr.jsonl> (<file.pdf>... | --list <list.txt>)");
+        eprintln!("usage: router-cli <file.pdf>... | router-cli --list <list.txt> | router-cli --merge <ocr.jsonl> [--min-conf <0 to 1>] (<file.pdf>... | --list <list.txt>)");
         std::process::exit(2);
     }
     for f in files {
-        match &ocr { Some(o) => println!("{}", merged_json(&f, o)), None => println!("{}", file_json(&f)) }
+        match &ocr { Some(o) => println!("{}", merged_json(&f, o, min_conf)), None => println!("{}", file_json(&f)) }
     }
 }
