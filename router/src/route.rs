@@ -60,9 +60,10 @@ pub fn image_decision(r: &Region, kind: Option<(&'static str, f64, f64)>) -> (&'
     (if c >= CUT { "ocr" } else { "skip" }, c, reasons)
 }
 
-/// A word whose text doesn't decode to real characters (as wordbox's verdict counts them).
+/// A word whose text doesn't decode to real characters: unmapped, U+FFFD, private use, or a control
+/// character, C0 or C1 (005448 in govdocs1 thread 005 decodes to C1 controls among Latin-1 letters).
 pub fn undecodable(text: &str, unmapped: usize) -> bool {
-    unmapped > 0 || text.chars().any(|c| c == '\u{fffd}' || ('\u{e000}'..='\u{f8ff}').contains(&c) || (c < ' ' && !c.is_whitespace()))
+    unmapped > 0 || text.chars().any(|c| c == '\u{fffd}' || ('\u{e000}'..='\u{f8ff}').contains(&c) || (c.is_control() && !c.is_whitespace()))
 }
 
 /// Boxes grouped into blocks: a box joins a block when it comes within `gap` times its own height
@@ -172,6 +173,7 @@ mod tests {
     fn undecodable_words_are_control_private_use_or_unmapped() {
         assert!(undecodable("\u{1c}\u{11}", 0) && undecodable("\u{e041}b", 0) && undecodable("ok", 1) && undecodable("a\u{fffd}", 0));
         assert!(!undecodable("Party", 0) && !undecodable("a b", 0));
+        assert!(undecodable("}\u{8f}\u{be}", 0) && !undecodable("caf\u{e9}", 0));
     }
 
     #[test]

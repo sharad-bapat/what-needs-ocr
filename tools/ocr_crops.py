@@ -1,6 +1,7 @@
 """OCR the routes: crop every `ocr` route router-cli gives and read it with Tesseract, caching each result.
 
-For each route, the page is rendered with PyMuPDF over the route's box and 6 pt round it, in grey: an image route at
+For each route, the page is rendered with PyMuPDF over the route's box and 6 pt round it, in grey, turned so
+its own text runs left to right (a page with /Rotate can read sideways as displayed): an image route at
 the image's own resolution (its dpi from the router, kept between 150 and 400), outlined and garbled text
 at 300 dpi. Tesseract reads the crop (TSV output, one word per line with its box and confidence), and the
 words' boxes are mapped back to points on the page as displayed (after /Rotate, like the router's).
@@ -28,6 +29,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -59,12 +61,42 @@ def routes_of(files):
     return [json.loads(l) for l in out.splitlines() if l.strip()]
 
 
-def crop(page, box, dpi):
-    """The route's box rendered in grey at dpi, and where the crop's top-left pixel sits on the displayed
-    page, in pixels at that dpi."""
-    clip = (fitz.Rect(box[0] - PAD, box[1] - PAD, box[2] + PAD, box[3] + PAD) * page.derotation_matrix) & page.rect
+def turned(page):
+    """The page turned so its own text runs left to right, for reading: (the page to render, the matrix
+    from the displayed page to it, the matrix back, a document to keep alive). The text's direction is its
+    lines' most common one in the text layer, by characters; the page keeps its own /Rotate when that
+    already reads (or when it has no text), else the first of 0, 90, 180 and 270 that does. Checked on
+    govdocs1 005: 005530 (/Rotate 270) reads with /Rotate taken off, 005523 and 005944 (/Rotate 90) as
+    displayed. A page that reads as displayed is rendered as it is, unchanged."""
+    count = Counter()
+    for b in page.get_text("dict")["blocks"]:
+        for line in b.get("lines", []):
+            count[(round(line["dir"][0]), round(line["dir"][1]))] += sum(len(s["text"]) for s in line["spans"])
+    d = fitz.Point(count.most_common(1)[0][0]) if count else None
+    reads = lambda m: d is None or ((v := d * m - fitz.Point(0, 0) * m).x > 0.9 and abs(v.y) < 0.1)
+    if reads(page.rotation_matrix):
+        return page, fitz.Identity, fitz.Identity, None
+    one = fitz.open()
+    one.insert_pdf(page.parent, from_page=page.number, to_page=page.number)
+    cp = one[0]
+    for r in (0, 90, 180, 270):
+        cp.set_rotation(r)
+        if reads(cp.rotation_matrix):
+            break
+    else:
+        cp.set_rotation(page.rotation)
+    return cp, page.derotation_matrix * cp.rotation_matrix, cp.derotation_matrix * page.rotation_matrix, one
+
+
+def crop(turn, box, dpi):
+    """The route's box, from the page as displayed, rendered in grey at dpi from the turned page; where the
+    crop's top-left pixel sits, in pixels at that dpi on the turned page; and the matrix from the turned
+    page's points to the displayed page (None when they're the same). The clip is in the coordinates of
+    the page as rendered."""
+    page, to_turned, back, _ = turn
+    clip = (fitz.Rect(box[0] - PAD, box[1] - PAD, box[2] + PAD, box[3] + PAD) * to_turned) & page.rect
     pix = page.get_pixmap(dpi=dpi, clip=clip, colorspace=fitz.csGRAY, alpha=False)
-    return pix.tobytes("png"), pix.width, pix.height, pix.x, pix.y
+    return pix.tobytes("png"), pix.width, pix.height, pix.x, pix.y, None if back == fitz.Identity else back
 
 
 def read(png, dpi, key):
@@ -128,26 +160,31 @@ def main():
         with fitz.open(d["file"]) as doc:
             for p in d["pages"]:
                 crops = []
+                turn = turned(doc[p["n"] - 1])
                 routes = [{"source": "page", "decision": "ocr", "dpi": 0, "x0": 0, "y0": 0, "x1": p["width"], "y1": p["height"]}] if "pages" in flags else p["routes"]
                 for i, r in enumerate(routes):
                     if r["decision"] != "ocr":
                         continue
                     dpi = round(min(max(r["dpi"], DPI_RANGE[0]), DPI_RANGE[1])) if r["source"] == "image" else TEXT_DPI
                     box = [r["x0"], r["y0"], r["x1"], r["y1"]]
-                    png, w, h, ox, oy = crop(doc[p["n"] - 1], box, dpi)
+                    png, w, h, ox, oy, rot = crop(turn, box, dpi)
                     key = hashlib.sha256(png + b"|" + settings + b"|" + str(dpi).encode()).hexdigest()[:24]
                     c = {"route": i, "source": r["source"], "box": box, "dpi": dpi, "px": [w, h], "cache": key}
                     crops.append(c)
-                    jobs.append((c, png, ox, oy))
+                    jobs.append((c, png, ox, oy, rot))
                 row["pages"].append({"n": p["n"], "crops": crops})
     cached = sum(1 for c, *_ in jobs if (CACHE / f"{c['cache']}.tsv").exists() and (CACHE / f"{c['cache']}.secs").exists())
     with Progress(*Progress.get_default_columns(), TimeElapsedColumn(), MofNCompleteColumn(), transient=True) as bar:
         task = bar.add_task("tesseract", total=len(jobs))
 
         def one(job):
-            c, png, ox, oy = job
+            c, png, ox, oy, rot = job
             tsv, c["secs"] = read(png, c["dpi"], c["cache"])
             c["words"] = words_of(tsv, ox, oy, c["dpi"])
+            if rot is not None:
+                for w in c["words"]:
+                    r = fitz.Rect(w[:4]) * rot
+                    w[:4] = [round(r.x0, 2), round(r.y0, 2), round(r.x1, 2), round(r.y1, 2)]
             bar.advance(task)
 
         with ThreadPoolExecutor(max_workers=int(opt.get("jobs", 4))) as pool:
