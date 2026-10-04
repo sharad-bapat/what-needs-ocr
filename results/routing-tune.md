@@ -12,7 +12,7 @@ router-cli (router/src/route.rs) turns each page's map from where-are-the-region
 
 Nothing is wrongly sent to OCR: none of the 30 already-OCR'd crops (each is a `text_layer` route), none of the 45 photos, logos and blank sheets, and none of the 15 untouched pages. Routes cover 21.6% of the page area; the regions that need OCR cover 23.5% (they include the crops' empty margins). Of the ocr routes at confidence 0.9 or more, 431 of 434 lie in a truth region; the one between 0.4 and 0.9 does too. The region short of 90% is outlined text, o0584, with 29 of its 41 words inside a route.
 
-Five routes fall outside every truth region but on the source page's own drawings, and the scorer counts them apart. ContractNLI pages can draw outlined text of their own: o0078, an untouched page, has its header ("/ Perfect Welding / Solar Energy / Perfect Charging") and the Fronius logo as vector paths with no text layer, checked by eye. The router is right to send them; the truth doesn't list them.
+Five routes (six since tuning on govdocs1 005 routed vector clusters holding letters) fall outside every truth region but on the source page's own drawings, and the scorer counts them apart. ContractNLI pages can draw outlined text of their own: o0078, an untouched page, has its header ("/ Perfect Welding / Solar Energy / Perfect Charging") and the Fronius logo as vector paths with no text layer, checked by eye. The router is right to send them; the truth doesn't list them.
 
 How it got here:
 

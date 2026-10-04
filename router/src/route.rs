@@ -6,7 +6,9 @@
 //!           text over it) times its pixel evidence that it holds text, `ocr` at or above CUT and `skip`
 //!           below. An image whose pixels can't be read (a codec regions doesn't decode, a colour space
 //!           named from the page's resources) is judged on structure alone.
-//!   vector  a cluster of paths regions calls outlined text: letters drawn as shapes. Always `ocr`.
+//!   vector  a cluster of paths regions calls outlined text (letters drawn as shapes), grouped into blocks;
+//!           and a cluster of another kind, such as a chart or a table, that holds at least LETTERS letter
+//!           shapes in word-like runs, whole. Always `ocr`.
 //!   words   a font's text layer that doesn't decode: when at least half of a font's visible words hold
 //!           unmapped, control, private-use or U+FFFD characters, its undecodable words are grouped into
 //!           boxes, each `ocr`.
@@ -15,8 +17,13 @@
 
 use regions::{kind, pixels, vkind, Page, Region};
 
-/// At or above it, OCR the route.
-pub const CUT: f64 = 0.4;
+/// At or above it, OCR an image. Tuned on govdocs1 005: images whose pixels show some text (a has-text
+/// above regions' floor of 0.05) reach 0.15 to 0.33 there, and the constructed set's photos, logos and blank
+/// sheets stay at 0.05.
+pub const CUT: f64 = 0.1;
+/// A vector cluster of another kind (a chart, a table) with at least this many letter-shaped paths in
+/// word-like runs holds outlined text too, and is OCR'd whole: govdocs1 005's charts draw their labels so.
+pub const LETTERS: u32 = 3;
 /// Invisible words over at least this share of an image make it an OCR layer.
 pub const LAYER: f64 = 0.3;
 /// A font's text layer is garbage when at least this share of its visible words don't decode.
@@ -120,10 +127,14 @@ pub fn route_page(bytes: &[u8], page: &Page) -> Vec<Route> {
     // words, so a short word regions didn't call letters is covered by its neighbours' block
     let kinds = vkind::classify_page(&page.vectors, &page.paths);
     let (mut boxes, mut conf) = (Vec::new(), 0.0f64);
-    for (v, k) in page.vectors.iter().zip(&kinds) {
-        if k.kind == "outlined_text" && !(v.white || v.hidden || v.offpage) {
+    for (i, (v, k)) in page.vectors.iter().zip(&kinds).enumerate() {
+        if v.white || v.hidden || v.offpage { continue; }
+        if k.kind == "outlined_text" {
             boxes.push([v.x0, v.y0, v.x1, v.y1]);
             conf = conf.max(k.confidence);
+        } else if k.features.glyphs >= LETTERS {
+            out.push(Route { x0: v.x0, y0: v.y0, x1: v.x1, y1: v.y1, source: "vector", index: i, decision: "ocr",
+                             confidence: k.has_text.max(0.5), dpi: 0.0, reasons: vec![(k.kind, k.confidence), ("letters", k.features.glyphs as f64)] });
         }
     }
     for b in blocks(&boxes, 1.5) {

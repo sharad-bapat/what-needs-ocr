@@ -23,7 +23,12 @@ with none is ignored). The truth is the case's file words plus every region's wo
   region      the recall of the words in regions that need OCR alone
   cost        page area OCR'd (the routes' boxes), Megapixels sent, Tesseract calls and seconds
 
+On the real set (--real), the truth is the thread's reference (tools/build_real.py), so the numbers are
+agreement with it, not accuracy; there are no cut words, and every picked page has a usable text layer,
+so "skip text" is the file's text there.
+
 usage: python tools/score_ocr.py [--split=tune]
+       python tools/score_ocr.py --real=005 --root=<govdocs1 dir>
 Held-out cases are refused until the router is frozen.
 """
 import json
@@ -53,7 +58,7 @@ def near(t, c):
 
 
 def merged(files, ocr):
-    """router-cli --merge over the files: per file name, its first page's words as (box, text)."""
+    """router-cli --merge over the files: per (file name, page number), the page's words as (box, text)."""
     with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8") as f:
         f.write("\n".join(str(p.resolve()).replace("\\", "/") for p in files))
         lst = f.name
@@ -61,16 +66,17 @@ def merged(files, ocr):
     Path(lst).unlink()
     res = {}
     for d in map(json.loads, out.splitlines()):
-        res[Path(d["file"]).name] = [([w["x0"], w["y0"], w["x1"], w["y1"]], w["t"]) for w in d["pages"][0]["words"]]
+        for p in d.get("pages", []):
+            res[(Path(d["file"]).name, p["n"])] = [([w["x0"], w["y0"], w["x1"], w["y1"]], w["t"]) for w in p["words"]]
     return res
 
 
 def ocr_results(path):
-    """An OCR results file: per file name, (its first page's crops, their words as (box, text))."""
+    """An OCR results file: per (file name, page number), (the page's crops, their words as (box, text))."""
     res = {}
     for d in map(json.loads, open(path, encoding="utf-8")):
-        crops = d["pages"][0]["crops"] if d["pages"] else []
-        res[Path(d["file"]).name] = (crops, [(w[:4], w[4]) for c in crops for w in c["words"]])
+        for p in d.get("pages", []):
+            res[(Path(d["file"]).name, p["n"])] = (p["crops"], [(w[:4], w[4]) for c in p["crops"] for w in c["words"]])
     return res
 
 
@@ -118,12 +124,27 @@ def area_share(boxes, w, h, step=4.0):
 
 def main():
     opt = dict(a[2:].split("=", 1) for a in sys.argv[1:] if a.startswith("--") and "=" in a)
-    split = opt.get("split", "tune")
-    if split != "tune":
-        sys.exit("held-out cases are refused until the router is frozen")
-    items = [i for i in json.loads((SET / "manifest.json").read_text(encoding="utf-8"))["items"] if i["split"] == split]
-    files = [SET / i["file"] for i in items]
-    routed_ocr, pages_ocr = ROOT / "results" / f"ocr-{split}.jsonl", ROOT / "results" / f"ocr-pages-{split}.jsonl"
+    if "real" in opt:
+        # the real set: one thread's picked pages, against its reference (data/real/<thread>.json)
+        thread, root = opt["real"], Path(opt["root"])
+        man = json.loads((ROOT / "data" / "real" / f"{thread}.json").read_text(encoding="utf-8"))
+        split, items = man["items"][0]["split"] if man["items"] else "tune", man["items"]
+        if split != "tune":
+            sys.exit("held-out pages are refused until the router is frozen")
+        files = sorted({root / i["file"] for i in items})
+        path_of = lambda i: root / i["file"]
+        label = f"govdocs1 {thread} ({split}), agreement with the reference"
+        tag = f"real-{thread}"
+    else:
+        split = opt.get("split", "tune")
+        if split != "tune":
+            sys.exit("held-out cases are refused until the router is frozen")
+        items = [i for i in json.loads((SET / "manifest.json").read_text(encoding="utf-8"))["items"] if i["split"] == split]
+        files = [SET / i["file"] for i in items]
+        path_of = lambda i: SET / i["file"]
+        label = f"{split} split"
+        tag = split
+    routed_ocr, pages_ocr = ROOT / "results" / f"ocr-{tag}.jsonl", ROOT / "results" / f"ocr-pages-{tag}.jsonl"
     routed = merged(files, routed_ocr)
     with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False, encoding="utf-8") as f:
         empty = f.name
@@ -134,19 +155,19 @@ def main():
     tot = {m: defaultdict(Counter) for m in METHODS}
     cost = {m: Counter() for m in METHODS}
     for it in items:
-        name = Path(it["file"]).name
+        name = (path_of(it).name, it.get("page", 1))
         truth, region_ids = list(it["file_words"]), set()
         for reg in it["regions"]:
             for wd in reg["words"]:
                 if reg["expect"] == "ocr":
                     region_ids.add(len(truth))
                 truth.append(wd)
-        cuts = [c for r in it["regions"] for c in r["cut"]]
-        page_crops, page_words = pages[name]
+        cuts = [c for r in it["regions"] for c in r.get("cut", [])]
+        page_crops, page_words = pages.get(name, ([], []))
         has_text = bool(file_only[name])
         outs = {"routed": routed[name], "every page": page_words, "skip text": file_only[name] if has_text else page_words, "file text": file_only[name]}
-        w, h = page_crops[0]["box"][2], page_crops[0]["box"][3]
-        sent = {"routed": crops[name][0], "every page": page_crops, "skip text": [] if has_text else page_crops, "file text": []}
+        w, h = (it["width"], it["height"]) if "width" in it else (page_crops[0]["box"][2], page_crops[0]["box"][3])
+        sent = {"routed": crops.get(name, ([], []))[0], "every page": page_crops, "skip text": [] if has_text else page_crops, "file text": []}
         for m in METHODS:
             r = score(truth, region_ids, cuts, outs[m])
             for k, key in enumerate(("truth", "found", "region", "region_found", "counted", "missing", "extra")):
@@ -160,7 +181,7 @@ def main():
             cost[m]["secs"] += sum(c["secs"] for c in cs)
 
     pct = lambda a, b: f"{100 * a / b:.2f}%" if b else "-"
-    print(f"{split} split, {len(items)} cases")
+    print(f"{label}, {len(items)} pages")
     print(f"{'method':<11} {'recall':>8} {'precision':>9} {'word error':>10} {'region':>8}   {'area OCRd':>9} {'Mpx':>7} {'calls':>5} {'secs':>6}")
     for m in METHODS:
         a, c = tot[m]["all"], cost[m]

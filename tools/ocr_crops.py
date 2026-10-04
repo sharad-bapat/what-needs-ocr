@@ -2,7 +2,7 @@
 
 For each route, the page is rendered with PyMuPDF over the route's box and 6 pt round it, in grey, turned so
 its own text runs left to right (a page with /Rotate can read sideways as displayed): an image route at
-the image's own resolution (its dpi from the router, kept between 150 and 400), outlined and garbled text
+the image's own resolution (its dpi from the router, kept between 300 and 400), outlined and garbled text
 at 300 dpi. Tesseract reads the crop (TSV output, one word per line with its box and confidence), and the
 words' boxes are mapped back to points on the page as displayed (after /Rotate, like the router's).
 Tesseract runs with OMP_THREAD_LIMIT=1, so the same crop always gives the same words, and its TSV is
@@ -20,6 +20,7 @@ Output, one JSON line per file:
 
 usage: python tools/ocr_crops.py <list.txt> --out=<file.jsonl> [--jobs=4] [--pages]
        python tools/ocr_crops.py --split=tune --out=<file.jsonl> [--jobs=4] [--pages]    the constructed set's split
+       python tools/ocr_crops.py --real=005 --root=<govdocs1 dir> --out=<file.jsonl> [--pages]    the real set's picked pages only
 Held-out cases are refused until the router is frozen.
 """
 import hashlib
@@ -44,7 +45,9 @@ ARGS = ["-l", "eng", "--psm", "3"]
 TEXT_DPI = 300
 # white space added round each crop, in points: Tesseract finds little on a crop cut tight to its letters
 PAD = 6
-DPI_RANGE = (150, 400)
+# an image is read at its own resolution, but at 300 dpi at least: Tesseract reads small type better scaled
+# up (on the constructed set, full scans read at their own 150 dpi lost to the same pages read at 300)
+DPI_RANGE = (300, 400)
 
 
 def tesseract_version():
@@ -136,9 +139,16 @@ def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     opt = dict(a[2:].split("=", 1) for a in sys.argv[1:] if a.startswith("--") and "=" in a)
     flags = {a[2:] for a in sys.argv[1:] if a.startswith("--") and "=" not in a}
-    if "out" not in opt or (not args and "split" not in opt):
+    if "out" not in opt or (not args and "split" not in opt and "real" not in opt):
         sys.exit(__doc__)
-    if "split" in opt:
+    picked = None
+    if "real" in opt:
+        man = json.loads((ROOT / "data" / "real" / f"{opt['real']}.json").read_text(encoding="utf-8"))
+        if man["items"] and man["items"][0]["split"] != "tune":
+            sys.exit("held-out pages are refused until the router is frozen")
+        files = sorted({Path(opt["root"]) / i["file"] for i in man["items"]})
+        picked = {(Path(i["file"]).name, i["page"]) for i in man["items"]}
+    elif "split" in opt:
         if opt["split"] != "tune":
             sys.exit("held-out cases are refused until the router is frozen")
         man = json.loads((SET / "manifest.json").read_text(encoding="utf-8"))
@@ -159,6 +169,8 @@ def main():
             continue
         with fitz.open(d["file"]) as doc:
             for p in d["pages"]:
+                if picked is not None and (Path(d["file"]).name, p["n"]) not in picked:
+                    continue
                 crops = []
                 turn = turned(doc[p["n"] - 1])
                 routes = [{"source": "page", "decision": "ocr", "dpi": 0, "x0": 0, "y0": 0, "x1": p["width"], "y1": p["height"]}] if "pages" in flags else p["routes"]

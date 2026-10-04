@@ -4,7 +4,7 @@ tools/score_ocr.py scores four word lists per page on the 300 tune cases, agains
 
 | Method | Recall | Precision | Word error | Recall in regions that need OCR | Page area OCR'd | Megapixels | Tesseract calls | Tesseract seconds |
 |---|---|---|---|---|---|---|---|---|
-| routed (the pipeline) | 99.75% | 99.80% | 0.45% | 99.06% | 21.64% | 378.0 | 440 | 276 |
+| routed (the pipeline) | 99.77% | 99.75% | 0.47% | 99.18% | 21.64% | 581.6 | 441 | 317 |
 | every page | 98.09% | 99.19% | 2.66% | 98.82% | 100.00% | 2,562.3 | 300 | 951 |
 | skip text | 84.32% | 99.89% | 15.76% | 33.15% | 9.95% | 255.1 | 30 | 85 |
 | file text | 76.57% | 99.96% | 23.46% | 0.00% | 0.00% | 0.0 | 0 | 0 |
@@ -23,6 +23,8 @@ Recall and word error by kind:
 | blank | 100.00%, 0.00% | 99.27%, 1.18% | 100.00%, 0.00% | 100.00%, 0.00% |
 | control | 100.00%, 0.17% | 99.40%, 1.05% | 100.00%, 0.00% | 100.00%, 0.00% |
 
-The pipeline's word error is lower than OCR'ing every page: it keeps the file's own words, which are exact, and OCR's misreads of born-digital text (3.72% word error on the text pages) never enter. It sends 85% fewer pixels and spends 71% less Tesseract time. The one kind where it's behind is the full-page scan, read at the scan's own resolution (150 to 300 dpi here) where every-page reads at 300 dpi: 98.69% against 99.14%. Skip-text reads only the 30 full-page scans and misses everything pasted into pages that have text.
+Updated 4 October after tuning on govdocs1 005 (results/real-tune.md): images are now cropped at 300 dpi at least, the image cutoff is 0.1 and vector clusters holding letters are OCR'd; before, the routed row read 99.75%, 99.80%, 0.45%, 99.06%, 21.64%, 378.0, 440, 276. The by-kind table below is from before.
+
+The pipeline's word error is lower than OCR'ing every page: it keeps the file's own words, which are exact, and OCR's misreads of born-digital text (3.72% word error on the text pages) never enter. It sends 77% fewer pixels and spends 67% less Tesseract time. The one kind where it's behind is the full-page scan, read at the scan's own resolution (150 to 300 dpi here) where every-page reads at 300 dpi: 98.69% against 99.14%. Skip-text reads only the 30 full-page scans and misses everything pasted into pages that have text.
 
 The plan's targets for the constructed held-out set, checked here on tune only: recall in regions that need OCR at least 98% (99.06%), and word error no worse than OCR'ing every page by more than a point (0.45% against 2.66%). Every timing above is a sum of each call's wall time with four running at once; the two OCR runs were made under the same load.
