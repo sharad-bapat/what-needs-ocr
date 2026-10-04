@@ -2,7 +2,7 @@
 
 tools/build_real.py builds a reference word list for pages of govdocs1 thread 005 without the router: PyMuPDF's visible words that decode, plus the words Tesseract reads at 400 dpi that aren't on a file word (pixel words), plus OCR in place of a text layer that doesn't say what the page shows. The thread gives 668 pages from 262 files, 442 of them with images or drawings: 277,907 file words, 1,664 pixel words, 10 garbled words, and 2 pages whose layer is untrusted (394 OCR words). 804 pages had no usable text layer and aren't in the set.
 
-tools/check_real.py draws a seeded sample of 20 pages that have reference OCR words, each word boxed on the page as displayed, and I looked at every sheet.
+tools/check_real.py draws a seeded sample of 20 pages that have reference OCR words, each word boxed on the page as displayed, and Claude looked at every sheet.
 
 ## What the checks changed
 
