@@ -17,7 +17,7 @@ For each case, router-cli's `ocr` routes are compared with the manifest's truth 
               logo are vector paths with no text layer), which the truth doesn't list
 
 usage: python tools/score_route.py [--split=tune] [--worst=N]
-Held-out cases are refused until the router is frozen.
+Held-out data is refused unless tools/check_frozen.py passes.
 """
 import json
 import subprocess
@@ -27,6 +27,8 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 import fitz
+
+from check_frozen import require_frozen
 
 ROOT = Path(__file__).resolve().parent.parent
 CLI = ROOT / "router" / "target" / "release" / "router-cli.exe"
@@ -63,7 +65,7 @@ def main():
     opt = dict(a[2:].split("=", 1) for a in sys.argv[1:] if a.startswith("--") and "=" in a)
     split, worst = opt.get("split", "tune"), int(opt.get("worst", 8))
     if split != "tune":
-        sys.exit("held-out cases are refused until the router is frozen")
+        require_frozen()
     man = json.loads((SET / "manifest.json").read_text(encoding="utf-8"))
     items = [i for i in man["items"] if i["split"] == split]
     with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8") as f:

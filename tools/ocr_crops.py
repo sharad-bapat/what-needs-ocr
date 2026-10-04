@@ -21,7 +21,7 @@ Output, one JSON line per file:
 usage: python tools/ocr_crops.py <list.txt> --out=<file.jsonl> [--jobs=4] [--pages]
        python tools/ocr_crops.py --split=tune --out=<file.jsonl> [--jobs=4] [--pages]    the constructed set's split
        python tools/ocr_crops.py --real=005 --root=<govdocs1 dir> --out=<file.jsonl> [--pages]    the real set's picked pages only
-Held-out cases are refused until the router is frozen.
+Held-out data is refused unless tools/check_frozen.py passes.
 """
 import hashlib
 import json
@@ -36,6 +36,8 @@ from pathlib import Path
 
 import fitz
 from rich.progress import MofNCompleteColumn, Progress, TimeElapsedColumn
+
+from check_frozen import require_frozen
 
 ROOT = Path(__file__).resolve().parent.parent
 CLI = ROOT / "router" / "target" / "release" / "router-cli.exe"
@@ -145,12 +147,12 @@ def main():
     if "real" in opt:
         man = json.loads((ROOT / "data" / "real" / f"{opt['real']}.json").read_text(encoding="utf-8"))
         if man["items"] and man["items"][0]["split"] != "tune":
-            sys.exit("held-out pages are refused until the router is frozen")
+            require_frozen()
         files = sorted({Path(opt["root"]) / i["file"] for i in man["items"]})
         picked = {(Path(i["file"]).name, i["page"]) for i in man["items"]}
     elif "split" in opt:
         if opt["split"] != "tune":
-            sys.exit("held-out cases are refused until the router is frozen")
+            require_frozen()
         man = json.loads((SET / "manifest.json").read_text(encoding="utf-8"))
         files = [SET / i["file"] for i in man["items"] if i["split"] == opt["split"]]
     else:

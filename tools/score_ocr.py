@@ -29,7 +29,7 @@ so "skip text" is the file's text there.
 
 usage: python tools/score_ocr.py [--split=tune]
        python tools/score_ocr.py --real=005 --root=<govdocs1 dir>
-Held-out cases are refused until the router is frozen.
+Held-out data is refused unless tools/check_frozen.py passes.
 """
 import json
 import re
@@ -38,6 +38,8 @@ import sys
 import tempfile
 from collections import Counter, defaultdict
 from pathlib import Path
+
+from check_frozen import require_frozen
 
 ROOT = Path(__file__).resolve().parent.parent
 CLI = ROOT / "router" / "target" / "release" / "router-cli.exe"
@@ -130,7 +132,7 @@ def main():
         man = json.loads((ROOT / "data" / "real" / f"{thread}.json").read_text(encoding="utf-8"))
         split, items = man["items"][0]["split"] if man["items"] else "tune", man["items"]
         if split != "tune":
-            sys.exit("held-out pages are refused until the router is frozen")
+            require_frozen()
         files = sorted({root / i["file"] for i in items})
         path_of = lambda i: root / i["file"]
         label = f"govdocs1 {thread} ({split}), agreement with the reference"
@@ -138,7 +140,7 @@ def main():
     else:
         split = opt.get("split", "tune")
         if split != "tune":
-            sys.exit("held-out cases are refused until the router is frozen")
+            require_frozen()
         items = [i for i in json.loads((SET / "manifest.json").read_text(encoding="utf-8"))["items"] if i["split"] == split]
         files = [SET / i["file"] for i in items]
         path_of = lambda i: SET / i["file"]
