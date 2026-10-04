@@ -1,0 +1,54 @@
+[hidden] { display: none !important; }
+/* What needs OCR? demo. Uses the site's tokens when present, with fallbacks for the standalone page. */
+#demo {
+  --wn-ink: var(--text, #1c1c1c);
+  --wn-muted: var(--muted, #6b6b6b);
+  --wn-line: var(--rule, #d6d6d4);
+  --wn-bg: var(--bg, #ffffff);
+  --wn-accent: #1e50a2;
+  --wn-ocr: 196, 72, 0;
+  --wn-skip: 110, 110, 110;
+  --wn-layer: 46, 125, 50;
+  --wn-file: 30, 80, 162;
+}
+@media (prefers-color-scheme: dark) {
+  #demo { --wn-ink: var(--text, #ececec); --wn-muted: var(--muted, #a3a3a3); --wn-line: var(--rule, #3a3a3a); --wn-bg: var(--bg, #1f1f1f); --wn-accent: #7aa0e8; }
+}
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.wn-drop { border: 1.5px dashed var(--wn-line); border-radius: 12px; padding: 1.25rem; text-align: center; }
+.wn-drop.over { border-color: var(--wn-accent); }
+.wn-drop p { margin: 0 0 0.75rem; color: var(--wn-muted); }
+.wn-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: center; }
+.wn-btn { display: inline-flex; align-items: center; min-height: 44px; font: inherit; font-size: 0.9rem; padding: 0.45rem 0.95rem; border-radius: 999px; border: 1px solid var(--wn-ink); background: var(--wn-ink); color: var(--wn-bg); cursor: pointer; }
+.wn-btn.ghost { background: transparent; color: var(--wn-ink); border-color: var(--wn-line); }
+.wn-btn[aria-pressed="true"] { background: var(--wn-ink); color: var(--wn-bg); border-color: var(--wn-ink); }
+.wn-btn:disabled { opacity: 0.4; cursor: default; }
+.wn-btn:focus-visible { outline: 2px solid var(--wn-accent); outline-offset: 2px; }
+.wn-status { min-height: 1.4em; color: var(--wn-muted); font-size: 0.9rem; }
+.wn-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; margin: 0.5rem 0; font-size: 0.9rem; }
+.wn-page { font-variant-numeric: tabular-nums; }
+.wn-counts { color: var(--wn-muted); }
+.wn-views { display: flex; gap: 0.4rem; margin-left: auto; }
+.wn-swatch { display: inline-block; width: 0.8rem; height: 0.8rem; border-radius: 2px; vertical-align: -0.05rem; background: rgb(var(--c)); }
+.wn-view { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 1rem; align-items: start; }
+@media (max-width: 760px) { .wn-view { grid-template-columns: 1fr; } }
+.wn-stage { position: relative; background: #fff; border: 1px solid var(--wn-line); border-radius: 4px; overflow: hidden; }
+.wn-stage canvas { display: block; }
+.wn-overlay { position: absolute; inset: 0; }
+.wn-box { position: absolute; border: 1.5px solid rgba(var(--c), 0.8); background: rgba(var(--c), 0.1); }
+.wn-box.skip, .wn-box.text_layer { border-style: dashed; background: transparent; }
+.wn-box.word { border-width: 1px; background: rgba(var(--c), 0.12); }
+.wn-box.word.file { border-color: rgba(var(--c), 0.25); background: transparent; }
+.wn-box.hot { background: rgba(var(--c), 0.3); border-color: rgb(var(--c)); }
+.d-ocr, .s-ocr { --c: var(--wn-ocr); }
+.d-skip { --c: var(--wn-skip); }
+.d-text_layer, .s-file_ocr_layer { --c: var(--wn-layer); }
+.s-file { --c: var(--wn-file); }
+.wn-list { max-height: 70vh; overflow: auto; border: 1px solid var(--wn-line); border-radius: 4px; padding: 0.25rem 0; font-size: 0.85rem; line-height: 1.4; margin: 0; list-style: none; }
+.wn-item { padding: 0.35rem 0.75rem; border-left: 3px solid rgb(var(--c)); margin: 0 0 1px; }
+.wn-item.hot { background: rgba(var(--c), 0.15); }
+.wn-item .what { font-weight: 600; }
+.wn-item .why { display: block; color: var(--wn-muted); }
+.wn-item .t { display: block; overflow-wrap: anywhere; }
+.wn-item code { font-size: 0.8rem; }
+.wn-empty, .wn-note { color: var(--wn-muted); font-size: 0.9rem; }
