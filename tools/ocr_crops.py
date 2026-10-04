@@ -105,9 +105,10 @@ def crop(turn, box, dpi):
 
 
 def read(png, dpi, key):
-    """Tesseract's TSV for the crop and the seconds it took, from the cache when both are there."""
+    """Tesseract's TSV for the crop and the seconds it took, from the cache when both are there. The TSV is
+    written last, and each file through a temporary name and a rename, so a cached crop is always whole."""
     path, secs = CACHE / f"{key}.tsv", CACHE / f"{key}.secs"
-    if path.exists() and secs.exists():
+    if path.exists() and secs.exists() and secs.read_text().strip():
         return path.read_text(encoding="utf-8"), float(secs.read_text())
     with tempfile.TemporaryDirectory() as tmp:
         img = Path(tmp) / "c.png"
@@ -119,8 +120,10 @@ def read(png, dpi, key):
         took = round(time.perf_counter() - t0, 3)
     if path.exists() and path.read_text(encoding="utf-8") != tsv:
         raise SystemExit(f"Tesseract read crop {key} differently on a second run")
-    path.write_text(tsv, encoding="utf-8")
-    secs.write_text(str(took))
+    for target, text in ((secs, str(took)), (path, tsv)):
+        tmp = target.with_suffix(target.suffix + ".tmp")
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, target)
     return tsv, took
 
 
@@ -187,26 +190,37 @@ def main():
                     crops.append(c)
                     jobs.append((c, png, ox, oy, rot))
                 row["pages"].append({"n": p["n"], "crops": crops})
-    cached = sum(1 for c, *_ in jobs if (CACHE / f"{c['cache']}.tsv").exists() and (CACHE / f"{c['cache']}.secs").exists())
+    # the same crop can come up twice in a run (an image drawn twice): it's read once, and the first
+    # occurrence carries the Tesseract time (two threads on one cache key once read a half-written file)
+    unique = {}
+    for c, png, *_ in jobs:
+        unique.setdefault(c["cache"], (png, c["dpi"]))
+    cached = sum(1 for k in unique if (CACHE / f"{k}.tsv").exists() and (CACHE / f"{k}.secs").exists())
+    results = {}
     with Progress(*Progress.get_default_columns(), TimeElapsedColumn(), MofNCompleteColumn(), transient=True) as bar:
-        task = bar.add_task("tesseract", total=len(jobs))
+        task = bar.add_task("tesseract", total=len(unique))
 
-        def one(job):
-            c, png, ox, oy, rot = job
-            tsv, c["secs"] = read(png, c["dpi"], c["cache"])
-            c["words"] = words_of(tsv, ox, oy, c["dpi"])
-            if rot is not None:
-                for w in c["words"]:
-                    r = fitz.Rect(w[:4]) * rot
-                    w[:4] = [round(r.x0, 2), round(r.y0, 2), round(r.x1, 2), round(r.y1, 2)]
+        def one(item):
+            key, (png, dpi) = item
+            results[key] = read(png, dpi, key)
             bar.advance(task)
 
         with ThreadPoolExecutor(max_workers=int(opt.get("jobs", 4))) as pool:
-            list(pool.map(one, jobs))
+            list(pool.map(one, unique.items()))
+    timed = set()
+    for c, png, ox, oy, rot in jobs:
+        tsv, took = results[c["cache"]]
+        c["secs"] = 0.0 if c["cache"] in timed else took
+        timed.add(c["cache"])
+        c["words"] = words_of(tsv, ox, oy, c["dpi"])
+        if rot is not None:
+            for w in c["words"]:
+                r = fitz.Rect(w[:4]) * rot
+                w[:4] = [round(r.x0, 2), round(r.y0, 2), round(r.x1, 2), round(r.y1, 2)]
     Path(opt["out"]).write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n", encoding="utf-8")
     words = sum(len(c["words"]) for c, *_ in jobs)
     secs = sum(c["secs"] for c, *_ in jobs)
-    print(f"{len(rows)} files, {len(jobs)} crops ({cached} from the cache), {words} words, Tesseract {secs:.0f} s in all; {version}, {' '.join(ARGS)}")
+    print(f"{len(rows)} files, {len(jobs)} crops, {len(unique)} different ({cached} from the cache), {words} words, Tesseract {secs:.0f} s in all; {version}, {' '.join(ARGS)}")
 
 
 if __name__ == "__main__":
