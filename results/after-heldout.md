@@ -22,3 +22,16 @@ The cutoff was chosen by a rule written before any test: the lowest summed word 
 On the constructed set a low cutoff drops junk and a high one starts dropping true words that Tesseract was unsure of; on 005 the word error keeps falling as the cutoff rises, partly because the reference itself keeps only words at 85 or more. 0.5 has the lowest sum (1.70).
 
 006 has been used, so the cutoff is tested once on fresh pages, govdocs1 thread 007, built and scored the same way (below).
+
+### The test on govdocs1 007 (4 October 2026)
+
+613 pages from 231 files of thread 007, each with a usable text layer, 404 with images or drawings (data/real/007.json, built the same way as 005 and 006 and committed and pinned before any run). As before, the numbers are agreement with the reference, not accuracy.
+
+| Method | Recall | Precision | Word error | Recall of pixel-only words | Page area OCR'd | Megapixels | Tesseract calls | Tesseract seconds |
+|---|---|---|---|---|---|---|---|---|
+| routed, cutoff 0.5 | 98.97% | 99.56% | 1.42% | 83.60% | 2.35% | 166.6 | 315 | 92 |
+| routed, no cutoff | 98.98% | 99.31% | 1.65% | 83.87% | 2.35% | 166.6 | 315 | 92 |
+| every page | 96.12% | 96.77% | 6.90% | 91.91% | 98.25% | 5,150.0 | 613 | 1,738 |
+| file text | 98.32% | 99.82% | 1.85% | 9.56% | 0.00% | 0.0 | 0 | 0 |
+
+The cutoff lowers the word error from 1.65% to 1.42% for 0.01 points of recall, and with it the pipeline's word error is lower than the file's text alone (1.42% against 1.85%), where on 006 without it it was higher. Against OCR'ing every page it OCRs 2.35% of the area against 98.25% and its word error is 5.48 points lower, the plan's real-page target met again on pages no choice was made on.
