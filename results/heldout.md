@@ -32,3 +32,22 @@ tools/ocr_crops.py --split=heldout OCR'd the routed crops and then, back to back
 Recall and word error by kind, routed against every page: text 99.84% and 0.31% against 98.94% and 1.96%; already-OCR'd crops 99.48% and 0.59% against 98.48% and 2.10%; full scans 98.61% and 2.09% for both; outlined text 99.63% and 0.71% against 98.93% and 1.57%; garbled text 99.74% and 0.38% against 98.96% and 1.48%; photos, logos, blank sheets and untouched pages 100.00%, 99.97% and word error 0.38% or less, against 99.00% to 99.64% and up to 1.79%.
 
 The target was word error no more than a point worse than OCR'ing every page: the pipeline's is 1.27 points lower (0.49% against 1.76%), for 77% fewer pixels and 68% less Tesseract time. Full scans read exactly as well as with every-page OCR, both at 300 dpi now.
+
+## 3. The whole pipeline on govdocs1 006 (4 October 2026)
+
+636 pages from 235 files of thread 006, each with a usable text layer, 425 with images or drawings (data/real/006.json, built before any run and not looked at beyond its summary). The truth is the reference tools/build_real.py made without the router, so these numbers are agreement with it, not accuracy (results/real-reference-check.md: where the reference has a word it's right about 92% of the time, and it misses many small labels on maps and charts).
+
+The first run of tools/ocr_crops.py --real=006 stopped with an error before writing anything: when the same crop came up twice in one run, two threads shared a cache entry and one read the other's half-written time file. The fix (9b161fe) reads each distinct crop once and writes the cache through temporary files; it changes no OCR word (the tune split's output from the cache was identical crop by crop, and only the time counted twice for duplicates went, 317 to 315 seconds). The source was relocked (14fdcaa) and the run made again; the every-page run had finished under the old code, which has no duplicate crops to race on, and was kept.
+
+| Method | Recall | Precision | Word error | Recall of pixel-only words | Page area OCR'd | Megapixels | Tesseract calls | Tesseract seconds |
+|---|---|---|---|---|---|---|---|---|
+| routed (the pipeline) | 99.19% | 98.64% | 2.09% | 78.18% | 5.50% | 342.5 | 243 | 118 |
+| every page | 96.90% | 96.65% | 6.17% | 88.40% | 98.78% | 5,628.6 | 636 | 1,946 |
+| skip text | 98.58% | 99.77% | 1.64% | 0.79% | 0.24% | 15.1 | 2 | 3 |
+| file text | 98.53% | 99.77% | 1.68% | 0.69% | 0.00% | 0.0 | 0 | 0 |
+
+By kind, routed against every page: pages with images or drawings 98.89% recall and 2.94% word error against 96.26% and 7.38%; plain pages 99.88% and 0.18% against 98.34% and 3.45%.
+
+The target for real pages was at least 70% less page area sent to OCR than OCR'ing every page, with no more than a point more word error: the pipeline OCRs 5.50% of the area against 98.78% (94% less), and its word error is 4.08 points lower.
+
+Against the file's text alone, the pipeline finds more of the reference (99.19% against 98.53%) but its word error is higher (2.09% against 1.68%; on 005 it was lower, 1.44% against 1.55%). The difference is the words OCR adds that the reference doesn't hold: 2,699 of them, 2,087 with a Tesseract confidence under 85 (1,554 under 60), where the reference keeps only words at 85 or more. The merged list carries each OCR word's confidence, so a user can cut there; a cutoff in the merge itself would be chosen on tune data and tested on new pages, not on these.
