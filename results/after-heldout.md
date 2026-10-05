@@ -49,3 +49,7 @@ After the fix above, the router ran over all 478 files of the Sodir sample (43,0
 So a page with no text of its own (no word the file draws, an invisible OCR layer included) and nothing routed now has its largest image read when that image covers at least half the page (`FLOOR`, router/src/route.rs `page_floor`). The route keeps its own confidence and gains the reason `page_floor`. The rule was set from the Sodir sample, not tuned on any test set.
 
 All 24 sampled pages get a floor route, and Tesseract reads them: "SECTION A GEOLOGY", the contents page, the depth table, "4.7 Bit record". Every constructed and govdocs1 page has text of its own, so the floor can't fire there: routing on the constructed tune and held-out splits is unchanged (the same numbers as results/routing-tune.md and results/heldout.md), and the real-page results stand. Relocked at where-are-the-regions 8774fff.
+
+## Faster thumbnails (5 October 2026)
+
+where-are-the-regions now indexes a file once for all its thumbnails and averages one-component images through a table (62c1645, its results/speed.md); `route_page` takes that indexed file (`pixels::Source`). The output is the same: on 15 Sodir files, 1,469 of 1,493 pages give identical routes and the other 24 differ only by the page floor, which those runs predate. The router took 39 s on those files, against 188 s. Relocked at where-are-the-regions 62c1645; held-out routing is unchanged.

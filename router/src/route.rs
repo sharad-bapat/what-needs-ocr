@@ -113,13 +113,13 @@ pub fn blocks(boxes: &[[f64; 4]], gap: f64) -> Vec<[f64; 4]> {
     }
 }
 
-/// The routes for one page of the file `bytes`.
-pub fn route_page(bytes: &[u8], page: &Page) -> Vec<Route> {
+/// The routes for one page of a file, its images read from `src` (the file indexed once).
+pub fn route_page(src: &pixels::Source, page: &Page) -> Vec<Route> {
     let mut out = Vec::new();
     for r in &page.regions {
         let img = &page.images[r.image];
         // turned to how it shows on the page, so text on a rotated page reads as text (where-are-the-regions results/kinds-turn.md)
-        let thumb = pixels::placed_thumbnail(bytes, img, kind::KIND_THUMB).ok();
+        let thumb = src.placed(img, kind::KIND_THUMB).ok();
         let k = thumb.map(|t| kind::classify(t.w, t.h, &t.grey)).map(|k| (k.kind, k.confidence, k.has_text));
         let (decision, confidence, reasons) = image_decision(r, k);
         out.push(Route { x0: r.x0, y0: r.y0, x1: r.x1, y1: r.y1, source: "image", index: r.image, decision, confidence, dpi: r.dpi, reasons });
@@ -236,7 +236,7 @@ mod tests {
         for (k, o) in objs.iter().enumerate() { pdf += &format!("{} 0 obj\n{}\nendobj\n", k + 1, o); }
         pdf += "trailer << /Root 1 0 R >>\n%%EOF\n";
         let doc = regions::extract(pdf.as_bytes());
-        let routes = route_page(pdf.as_bytes(), &doc.pages[0]);
+        let routes = route_page(&pixels::Source::new(pdf.as_bytes()), &doc.pages[0]);
         assert_eq!(routes.len(), 1, "{routes:?}");
         assert!(routes[0].source == "words" && routes[0].decision == "ocr" && routes[0].confidence >= 0.99);
         assert!(routes[0].x0 >= 71.0 && routes[0].x1 > 150.0 && routes[0].y0 > 80.0 && routes[0].y1 < 100.0, "{:?}", routes[0]);
@@ -265,14 +265,14 @@ mod tests {
         // a blank full-page image with nothing else: skipped on its own merits, read by the floor
         let pdf = scan_page("");
         let doc = regions::extract(&pdf);
-        let routes = route_page(&pdf, &doc.pages[0]);
+        let routes = route_page(&pixels::Source::new(&pdf), &doc.pages[0]);
         assert_eq!(routes.len(), 1, "{routes:?}");
         assert_eq!(routes[0].decision, "ocr", "{routes:?}");
         assert!(routes[0].reasons.iter().any(|r| r.0 == "page_floor" && r.1 > 0.99) && routes[0].confidence < CUT, "{routes:?}");
         // the same page with a line of text of its own: the image stays skipped
         let pdf = scan_page("BT /F1 12 Tf 72 700 Td (A line of text) Tj ET");
         let doc = regions::extract(&pdf);
-        let routes = route_page(&pdf, &doc.pages[0]);
+        let routes = route_page(&pixels::Source::new(&pdf), &doc.pages[0]);
         assert!(routes.iter().all(|r| r.decision == "skip" && !r.reasons.iter().any(|x| x.0 == "page_floor")), "{routes:?}");
     }
 }

@@ -15,8 +15,9 @@ fn r2(v: f64) -> f64 { (v * 100.0).round() / 100.0 }
 #[wasm_bindgen]
 pub fn routes_json(bytes: &[u8]) -> String {
     let doc = regions::extract(bytes);
+    let src = regions::pixels::Source::new(bytes);
     let pages: Vec<String> = doc.pages.iter().map(|p| {
-        let routes: Vec<String> = route_page(bytes, p).iter().map(|r| {
+        let routes: Vec<String> = route_page(&src, p).iter().map(|r| {
             let reasons: Vec<String> = r.reasons.iter().map(|(k, v)| format!("[{},{}]", json_str(k), r2(*v))).collect();
             format!("{{\"x0\":{},\"y0\":{},\"x1\":{},\"y1\":{},\"source\":\"{}\",\"index\":{},\"decision\":\"{}\",\"confidence\":{},\"dpi\":{},\"reasons\":[{}]}}",
                     r2(r.x0), r2(r.y0), r2(r.x1), r2(r.y1), r.source, r.index, r.decision, r2(r.confidence), r2(r.dpi), reasons.join(","))
