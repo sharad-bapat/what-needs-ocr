@@ -35,3 +35,9 @@ On the constructed set a low cutoff drops junk and a high one starts dropping tr
 | file text | 98.32% | 99.82% | 1.85% | 9.56% | 0.00% | 0.0 | 0 | 0 |
 
 The cutoff lowers the word error from 1.65% to 1.42% for 0.01 points of recall, and with it the pipeline's word error is lower than the file's text alone (1.42% against 1.85%), where on 006 without it it was higher. Against OCR'ing every page it OCRs 2.35% of the area against 98.25% and its word error is 5.48 points lower, the plan's real-page target met again on pages no choice was made on.
+
+## Images read as they show on the page (5 October 2026)
+
+where-are-the-regions' kind layer read each image as stored, not as shown, so a scan stored on its side and turned by the page's /Rotate was called a graphic with no text, and the router skipped it. On the first 10 files of a sample of scanned well reports from the Norwegian Offshore Directorate, 323 of 1,105 image regions were skipped. The fix is in where-are-the-regions (8019e6d, its results/kinds-turn.md); the router now takes thumbnails from `pixels::placed_thumbnail`. On the same 10 files, 17 regions are skipped.
+
+Relocked at where-are-the-regions 8019e6d. Routing on the constructed held-out split (tools/score_route.py --split=heldout) gives the same numbers as results/heldout.md: 210 of 210 regions routed, none of the 45 photos, logos and blank sheets sent to OCR, 22.0% of the page area against 23.6% that needs it, and 316 of 324 routes at 0.9 or more right. The OCR runs weren't repeated.

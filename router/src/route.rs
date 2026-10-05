@@ -111,14 +111,8 @@ pub fn route_page(bytes: &[u8], page: &Page) -> Vec<Route> {
     let mut out = Vec::new();
     for r in &page.regions {
         let img = &page.images[r.image];
-        let objs: Vec<u32> = img.pieces.iter().map(|q| q.0).filter(|&o| o != 0).collect();
-        let thumb = if let Some(src) = &img.inline_src {
-            pixels::inline_thumbnail(&src.0, &src.1, kind::KIND_THUMB).ok()
-        } else if objs.is_empty() { None } else if img.pieces.len() > 1 {
-            pixels::merged_thumbnail(bytes, &img.pieces, kind::KIND_THUMB).ok()
-        } else {
-            pixels::image_thumbnail_max(bytes, objs[0], kind::KIND_THUMB).ok()
-        };
+        // turned to how it shows on the page, so text on a rotated page reads as text (where-are-the-regions results/kinds-turn.md)
+        let thumb = pixels::placed_thumbnail(bytes, img, kind::KIND_THUMB).ok();
         let k = thumb.map(|t| kind::classify(t.w, t.h, &t.grey)).map(|k| (k.kind, k.confidence, k.has_text));
         let (decision, confidence, reasons) = image_decision(r, k);
         out.push(Route { x0: r.x0, y0: r.y0, x1: r.x1, y1: r.y1, source: "image", index: r.image, decision, confidence, dpi: r.dpi, reasons });
