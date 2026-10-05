@@ -5,7 +5,9 @@
 //!           been read already); otherwise its structure score from regions (size, pixels, DPI, visible
 //!           text over it) times its pixel evidence that it holds text, `ocr` at or above CUT and `skip`
 //!           below. An image whose pixels can't be read (a codec regions doesn't decode, a colour space
-//!           named from the page's resources) is judged on structure alone.
+//!           named from the page's resources) is judged on structure alone. A page with no text of its
+//!           own and nothing routed gets its largest image read anyway when it covers most of the page
+//!           (FLOOR).
 //!   vector  a cluster of paths regions calls outlined text (letters drawn as shapes), grouped into blocks;
 //!           and a cluster of another kind, such as a chart or a table, that holds at least LETTERS letter
 //!           shapes in word-like runs, whole. Always `ocr`.
@@ -28,6 +30,11 @@ pub const LETTERS: u32 = 3;
 pub const LAYER: f64 = 0.3;
 /// A font's text layer is garbage when at least this share of its visible words don't decode.
 pub const GARBAGE: f64 = 0.5;
+/// The page floor: a page with no text of its own and nothing routed still has its largest image
+/// read when that image covers at least this share of the page, so a scanned page is never dropped
+/// whole. On Sodir's scanned well reports, 695 pages had every image skipped and about 400 of them
+/// held printed text, mostly sparse section headings (results/after-heldout.md).
+pub const FLOOR: f64 = 0.5;
 
 #[derive(Debug, Clone)]
 pub struct Route {
@@ -150,7 +157,28 @@ pub fn route_page(bytes: &[u8], page: &Page) -> Vec<Route> {
                              confidence: share, dpi: 0.0, reasons: vec![("undecodable", share), ("font_words", ws.len() as f64)] });
         }
     }
+    page_floor(&mut out, page);
     out
+}
+
+/// The page floor (FLOOR). Skipping a scanned page of text loses the page; reading a blank scan costs
+/// one OCR call that finds nothing, and the merge's confidence cutoff drops what little it might
+/// invent. Any word the file draws, an invisible OCR layer included, means the page has text of its
+/// own and the floor stays out. The route keeps its own confidence and gains the reason page_floor.
+fn page_floor(out: &mut [Route], page: &Page) {
+    let drawn = page.words.iter().any(|w| !(w.white || w.hidden || w.offpage));
+    if drawn || out.iter().any(|r| r.decision != "skip") { return; }
+    let area = (page.width * page.height).max(1e-9);
+    let largest = out.iter_mut()
+        .filter(|r| r.source == "image" && !page.images[r.index].offpage && !page.images[r.index].hidden)
+        .map(|r| { let s = (r.x1 - r.x0).max(0.0) * (r.y1 - r.y0).max(0.0) / area; (s, r) })
+        .max_by(|a, b| a.0.total_cmp(&b.0));
+    if let Some((share, r)) = largest {
+        if share >= FLOOR {
+            r.decision = "ocr";
+            r.reasons.push(("page_floor", (share * 1000.0).round() / 1000.0));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -212,5 +240,39 @@ mod tests {
         assert_eq!(routes.len(), 1, "{routes:?}");
         assert!(routes[0].source == "words" && routes[0].decision == "ocr" && routes[0].confidence >= 0.99);
         assert!(routes[0].x0 >= 71.0 && routes[0].x1 > 150.0 && routes[0].y0 > 80.0 && routes[0].y1 < 100.0, "{:?}", routes[0]);
+    }
+
+    /// One US Letter page drawing a white 8 x 8 image over all of it, and `text` on top.
+    fn scan_page(text: &str) -> Vec<u8> {
+        let hex = "FF".repeat(64) + ">";
+        let content = format!("q 612 0 0 792 0 0 cm /Im1 Do Q {}", text);
+        let objs = [
+            "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /XObject << /Im1 5 0 R >> /Font << /F1 6 0 R >> >> /Contents 4 0 R >>".to_string(),
+            format!("<< /Length {} >>\nstream\n{}\nendstream", content.len(), content),
+            format!("<< /Type /XObject /Subtype /Image /Width 8 /Height 8 /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /ASCIIHexDecode /Length {} >>\nstream\n{}\nendstream", hex.len(), hex),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>".to_string(),
+        ];
+        let mut pdf = String::from("%PDF-1.4\n");
+        for (k, o) in objs.iter().enumerate() { pdf += &format!("{} 0 obj\n{}\nendobj\n", k + 1, o); }
+        pdf += "trailer << /Root 1 0 R >>\n%%EOF\n";
+        pdf.into_bytes()
+    }
+
+    #[test]
+    fn a_scanned_page_is_never_dropped_whole() {
+        // a blank full-page image with nothing else: skipped on its own merits, read by the floor
+        let pdf = scan_page("");
+        let doc = regions::extract(&pdf);
+        let routes = route_page(&pdf, &doc.pages[0]);
+        assert_eq!(routes.len(), 1, "{routes:?}");
+        assert_eq!(routes[0].decision, "ocr", "{routes:?}");
+        assert!(routes[0].reasons.iter().any(|r| r.0 == "page_floor" && r.1 > 0.99) && routes[0].confidence < CUT, "{routes:?}");
+        // the same page with a line of text of its own: the image stays skipped
+        let pdf = scan_page("BT /F1 12 Tf 72 700 Td (A line of text) Tj ET");
+        let doc = regions::extract(&pdf);
+        let routes = route_page(&pdf, &doc.pages[0]);
+        assert!(routes.iter().all(|r| r.decision == "skip" && !r.reasons.iter().any(|x| x.0 == "page_floor")), "{routes:?}");
     }
 }
