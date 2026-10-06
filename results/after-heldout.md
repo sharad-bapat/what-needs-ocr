@@ -52,11 +52,11 @@ All 24 sampled pages get a floor route, and Tesseract reads them: "SECTION A GEO
 
 ## Faster thumbnails (5 October 2026)
 
-where-are-the-regions now indexes a file once for all its thumbnails and averages one-component images through a table (62c1645, its results/speed.md), and `route_page` takes that indexed file (`pixels::Source`). The routes are the same: on 15 Sodir files, 1,469 of 1,493 pages give identical routes and the other 24 differ only by the page floor, which those runs came before. The router took 39 s on those files, against 188 s. Held-out routing is unchanged.
+where-are-the-regions now indexes a file once for all its thumbnails and averages one-component images through a table (b31da19, its results/speed.md), and `route_page` takes that indexed file (`pixels::Source`). The routes are the same: on 15 Sodir files, 1,469 of 1,493 pages give identical routes and the other 24 differ only by the page floor, which those runs came before. The router took 39 s on those files, against 188 s. Held-out routing is unchanged.
 
 ## Has-text on scanned reports (5 October 2026)
 
-where-are-the-regions' kind layer changed for scanned reports (78d5f50, its results/kinds-sparse.md): the ink side picked by glyph count on images about half dark, wider thumbnails for long thin images, sideways text counted, and has-text on nearly empty pages with a heading. Its own held-out run found 149 of 157 Sodir pages with text, against 40, and held 9 more images without text on govdocs1 004. The router uses the new has-text as it is. Routing on the constructed tune and held-out splits is unchanged; I didn't repeat the real-page OCR runs (005 to 007).
+where-are-the-regions' kind layer changed for scanned reports (eed4e72, its results/kinds-sparse.md): the ink side picked by glyph count on images about half dark, wider thumbnails for long thin images, sideways text counted, and has-text on nearly empty pages with a heading. Its own held-out run found 149 of 157 Sodir pages with text, against 40, and held 9 more images without text on govdocs1 004. The router uses the new has-text as it is. Routing on the constructed tune and held-out splits is unchanged; I didn't repeat the real-page OCR runs (005 to 007).
 
 The browser build after these changes (67c5f8c) gives the same routes and merges as router-cli on all 1,304 files of the recorded OCR sets, the constructed tune and held-out splits and govdocs1 005 to 007 (tools/wasm_check.mjs, no differences).
 
