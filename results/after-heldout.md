@@ -57,3 +57,5 @@ where-are-the-regions now indexes a file once for all its thumbnails and average
 ## Has-text on scanned reports (5 October 2026)
 
 where-are-the-regions' kind layer changed for scanned reports (78d5f50, its results/kinds-sparse.md): polarity chosen by glyph count on images about half dark, wider thumbnails for long thin images, sideways text counted, and has-text on nearly empty pages with a heading. Its own held-out run found 149 of 157 Sodir pages with text, against 40, and held 9 more images without text on govdocs1 004. The router takes the new has-text as it is. Relocked at 78d5f50. Routing on the constructed tune and held-out splits is unchanged; the real-page OCR runs (005 to 007) weren't repeated.
+
+The browser build after these changes (67c5f8c) gives the same routes and merges as router-cli on all 1,304 files of the recorded OCR sets (constructed tune and held-out, govdocs1 005 to 007; tools/wasm_check.mjs, 0 differences).
