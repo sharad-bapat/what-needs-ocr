@@ -20,11 +20,19 @@ the baseline of OCR'ing every page, read the same way. Each crop's Tesseract tim
 next to its cached TSV; a crop cached before times were kept is read again to time it, and the new TSV
 must match the cached one.
 
+With --engine=ppocrv6, PP-OCRv6 (Apache 2.0, ONNX on CPU) reads the crops instead of Tesseract. It runs in
+its own Python environment (paddleocr with onnxruntime; no Paddle framework), named by the PPOCR_PYTHON
+environment variable, as one long-lived tools/ppocr_worker.py per worker thread, each on one CPU thread.
+--ppocr-tier=tiny|small|medium (default small) and --ppocr-side (the detector's long side in pixels,
+default 960) choose the model. PP-OCRv6 gives text lines, so each line's box is shared among its words by
+their lengths in characters; its score (0 to 1) is written as 0 to 100, Tesseract's scale. Its results are
+cached apart from Tesseract's, under a key that includes the model and settings.
+
 Output, one JSON line per file:
   {"file": ..., "pages": [{"n": 1, "crops": [{"route": 0, "source": "image", "box": [x0, y0, x1, y1],
     "dpi": 200, "px": [w, h], "cache": "<hash>", "secs": 0.41, "words": [[x0, y0, x1, y1, "text", conf], ...]}]}]}
 
-usage: python tools/ocr_crops.py <list.txt> --out=<file.jsonl> [--jobs=4] [--pages]
+usage: python tools/ocr_crops.py <list.txt> --out=<file.jsonl> [--jobs=4] [--pages] [--engine=ppocrv6 [--ppocr-tier=small] [--ppocr-side=960]]
        python tools/ocr_crops.py --split=tune --out=<file.jsonl> [--jobs=4] [--pages]    the constructed set's split
        python tools/ocr_crops.py --real=005 --root=<govdocs1 dir> --out=<file.jsonl> [--pages]    the real set's picked pages only
 Held-out data is refused unless tools/check_frozen.py passes.
@@ -171,6 +179,73 @@ def read(png, dpi, key):
     return tsv, took
 
 
+PPOCR_WORKER = Path(__file__).resolve().parent / "ppocr_worker.py"
+# memory one PP-OCRv6 reader reached on dense Sodir pages (small tier, detector side 960): 840 MB
+PPOCR_GB = 0.9
+_ppocr = threading.local()
+_ppocr_all = []
+
+
+def ppocr_settings(tier, side):
+    """The engine's identity for the cache key: model, detector size and package versions."""
+    py = os.environ.get("PPOCR_PYTHON")
+    if not py:
+        sys.exit("--engine=ppocrv6 needs PPOCR_PYTHON: the Python of an environment with paddleocr and onnxruntime")
+    v = subprocess.run([py, "-c", "import paddleocr, onnxruntime; print(paddleocr.__version__, onnxruntime.__version__)"],
+                       capture_output=True, text=True, check=True).stdout.split()
+    return f"PP-OCRv6_{tier} side {side}, 1 thread, paddleocr {v[0]}, onnxruntime {v[1]}"
+
+
+def read_ppocr(png, key, tier, side):
+    """PP-OCRv6's lines for the crop (JSON) and the seconds it took, cached like Tesseract's TSV. Each worker
+    thread keeps its own reader process, so the models load once per thread."""
+    path, secs = CACHE / f"{key}.ppocr.json", CACHE / f"{key}.secs"
+    if path.exists() and secs.exists() and secs.read_text().strip():
+        return path.read_text(encoding="utf-8"), float(secs.read_text())
+    w = getattr(_ppocr, "proc", None)
+    if w is None:
+        w = subprocess.Popen([os.environ["PPOCR_PYTHON"], str(PPOCR_WORKER), tier, str(side)], stdin=subprocess.PIPE,
+                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8")
+        if '"ready"' not in w.stdout.readline():
+            raise RuntimeError("the PP-OCRv6 worker didn't start")
+        _ppocr.proc, _ppocr.dir = w, tempfile.mkdtemp()
+        _ppocr_all.append(w)
+    img = Path(_ppocr.dir) / "c.png"
+    img.write_bytes(png)
+    t0 = time.perf_counter()
+    w.stdin.write(json.dumps({"png": str(img)}) + "\n")
+    w.stdin.flush()
+    answer = json.loads(w.stdout.readline())
+    took = round(time.perf_counter() - t0, 3)
+    if "error" in answer:
+        raise RuntimeError(f"PP-OCRv6 on crop {key}: {answer['error']}")
+    text = json.dumps(answer["lines"], ensure_ascii=False)
+    if path.exists() and path.read_text(encoding="utf-8") != text:
+        raise SystemExit(f"PP-OCRv6 read crop {key} differently on a second run")
+    for target, t in ((secs, str(took)), (path, text)):
+        tmp = target.with_suffix(target.suffix + ".tmp")
+        tmp.write_text(t, encoding="utf-8")
+        os.replace(tmp, target)
+    return text, took
+
+
+def words_of_ppocr(lines_json, ox, oy, dpi):
+    """PP-OCRv6's lines as words in points on the displayed page: each line's box shared among its words
+    by length in characters (a space counts as one), its score as 0 to 100."""
+    s = 72 / dpi
+    out = []
+    for x0, y0, x1, y1, text, score in json.loads(lines_json):
+        per = (x1 - x0) / max(len(text), 1)
+        at = 0
+        for word in text.split(" "):
+            if word:
+                a, b = x0 + at * per, x0 + (at + len(word)) * per
+                out.append([round((ox + a) * s, 2), round((oy + y0) * s, 2), round((ox + b) * s, 2), round((oy + y1) * s, 2),
+                            word, round(score * 100, 1)])
+            at += len(word) + 1
+    return out
+
+
 def words_of(tsv, ox, oy, dpi):
     """Word lines of Tesseract's TSV, their pixel boxes moved to points on the displayed page."""
     s = 72 / dpi
@@ -205,8 +280,10 @@ def main():
     else:
         files = [Path(l.strip()) for l in open(args[0], encoding="utf-8") if l.strip()]
     CACHE.mkdir(parents=True, exist_ok=True)
-    version = tesseract_version()
-    settings = "|".join([version, *ARGS]).encode()
+    ppocr = opt.get("engine") == "ppocrv6"
+    tier, side = opt.get("ppocr-tier", "small"), int(opt.get("ppocr-side", 960))
+    version = ppocr_settings(tier, side) if ppocr else tesseract_version()
+    settings = version.encode() if ppocr else "|".join([version, *ARGS]).encode()
 
     # Crops are rendered one at a time and handed to the workers as they come, across all the files, so
     # the workers never wait on a file's rendering and a long file doesn't hold up the rest. At most
@@ -214,6 +291,16 @@ def main():
     # can come up twice in a run (an image drawn twice): it's read once, and the first occurrence carries
     # the Tesseract time (two threads on one cache key once read a half-written file).
     workers = int(opt.get("jobs", 4))
+    if ppocr:
+        # a PP-OCRv6 reader holds about PPOCR_GB of memory on a dense page: no more readers than fit
+        try:
+            import psutil
+            fit = max(1, int(psutil.virtual_memory().available / 2**30 / PPOCR_GB))
+            if fit < workers:
+                print(f"--jobs={workers} lowered to {fit}: PP-OCRv6 readers need about {PPOCR_GB} GB each", file=sys.stderr)
+                workers = fit
+        except ImportError:
+            pass
     room = threading.BoundedSemaphore(IN_FLIGHT * workers)
     jobs, rows, futures, cached = [], [], {}, 0
     with Progress(*Progress.get_default_columns(), TimeElapsedColumn(), MofNCompleteColumn(), transient=True) as bar, \
@@ -222,7 +309,7 @@ def main():
 
         def one(png, dpi, key):
             try:
-                return read(png, dpi, key)
+                return read_ppocr(png, key, tier, side) if ppocr else read(png, dpi, key)
             finally:
                 room.release()
                 bar.advance(task)
@@ -269,7 +356,7 @@ def main():
         tsv, took = results[c["cache"]]
         c["secs"] = 0.0 if c["cache"] in timed else took
         timed.add(c["cache"])
-        c["words"] = words_of(tsv, ox, oy, c["dpi"])
+        c["words"] = words_of_ppocr(tsv, ox, oy, c["dpi"]) if ppocr else words_of(tsv, ox, oy, c["dpi"])
         if rot is not None:
             for w in c["words"]:
                 r = fitz.Rect(w[:4]) * rot
@@ -278,7 +365,11 @@ def main():
     Path(opt["out"]).write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n", encoding="utf-8")
     words = sum(len(c["words"]) for c, *_ in jobs)
     secs = sum(c["secs"] for c, *_ in jobs)
-    print(f"{len(rows)} files, {len(jobs)} crops, {len(unique)} different ({cached} from the cache), {words} words, Tesseract {secs:.0f} s in all; {version}, {' '.join(ARGS)}")
+    for w in _ppocr_all:
+        w.stdin.close()
+        w.wait()
+    engine = "PP-OCRv6" if ppocr else "Tesseract"
+    print(f"{len(rows)} files, {len(jobs)} crops, {len(unique)} different ({cached} from the cache), {words} words, {engine} {secs:.0f} s in all; {version}" + ("" if ppocr else f", {' '.join(ARGS)}"))
 
 
 if __name__ == "__main__":

@@ -30,7 +30,7 @@ A word's `source` is `file` (a visible word the file gives as text), `file_ocr_l
 - `router/`: the library and `router-cli`. `src/route.rs` decides the routes and `src/merge.rs` merges the words. It depends on where-are-the-regions as a path dependency, so the two repos have to sit side by side.
 - `wasm/`: the browser build, `routes_json(bytes)` and `merge_json(bytes, crops, min_conf)`. It's a separate crate so the frozen router stays untouched, and `tools/wasm_check.mjs` confirms its output equals router-cli's.
 - `demo/`: the browser demo. pdf.js 6.3.289 (Apache-2.0, bundled with its licence) draws the page, and the routes are worked out live in the browser and boxed on top. Its three made-up sample PDFs come from `tools/samples.py`, with their crops read beforehand by Tesseract, since Tesseract doesn't run in the page; `tools/demo_check.mjs` drives it in headless Chrome.
-- `tools/`: building the test sets, cropping and OCR (`ocr_crops.py`), the scorers, the freeze check, and the govdocs1 download (`fetch_govdocs.py`, resumable).
+- `tools/`: building the test sets, cropping and OCR (`ocr_crops.py`, with Tesseract or PP-OCRv6 through `ppocr_worker.py`), the scorers, the freeze check, and the govdocs1 download (`fetch_govdocs.py`, resumable).
 - `data/`: the constructed set's manifest and the real pages' references.
 - `results/`: every number below, with how it was measured, and each run's OCR output.
 
@@ -92,6 +92,8 @@ python tools/score_ocr.py --split=tune
 python tools/ocr_crops.py --real=005 --root=<govdocs1 dir> --out=results/ocr-real-005.jsonl
 python tools/score_ocr.py --real=005 --root=<govdocs1 dir>
 router/target/release/router-cli --merge results/ocr-tune.jsonl file.pdf
+uv venv ppocr && uv pip install -p ppocr paddleocr==3.7.0 onnxruntime   # PP-OCRv6's own environment, no Paddle framework
+PPOCR_PYTHON=ppocr/Scripts/python.exe python tools/ocr_crops.py <list.txt> --out=<file.jsonl> --engine=ppocrv6
 python tools/check_frozen.py
 (cd wasm && wasm-pack build --release --target web)   # then copy pkg/router_wasm.js and pkg/router_wasm_bg.wasm into demo/
 node tools/wasm_check.mjs
