@@ -136,6 +136,7 @@ dependencies = [
  "aes",
  "md-5",
  "miniz_oxide",
+ "ttf-parser",
 ]
 
 [[package]]
@@ -162,7 +163,6 @@ version = "0.1.0"
 dependencies = [
  "miniz_oxide",
  "pdf-core",
- "ttf-parser",
  "zune-jpeg",
 ]
 
