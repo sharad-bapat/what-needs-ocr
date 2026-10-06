@@ -18,7 +18,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 REGIONS = ROOT.parent / "where-are-the-regions"
-# the shared PDF parser under regions (D4), pinned the same way
+# the shared PDF parser under where-are-the-regions, pinned the same way
 PDF_CORE = ROOT.parent / "pdf-core"
 RECORD = ROOT / "results" / "frozen.sha256"
 CLI = ROOT / "router" / "target" / "release" / "router-cli.exe"
