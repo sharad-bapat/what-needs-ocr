@@ -1,5 +1,5 @@
 """Check the frozen source before any held-out run: every file in results/frozen.sha256 must hash as
-recorded, where-are-the-regions (a path dependency, so part of the router's behaviour) must be at the
+recorded, where-are-the-regions and pdf-core (path dependencies, so part of the router's behaviour) must be at the
 recorded commit with nothing changed in its regions/ folder, and router-cli must be newer than the files
 built into it.
 
@@ -18,6 +18,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 REGIONS = ROOT.parent / "where-are-the-regions"
+# the shared PDF parser under regions (D4), pinned the same way
+PDF_CORE = ROOT.parent / "pdf-core"
 RECORD = ROOT / "results" / "frozen.sha256"
 CLI = ROOT / "router" / "target" / "release" / "router-cli.exe"
 TOOLS = ["tools/check_frozen.py", "tools/ocr_crops.py", "tools/build_ocr_set.py", "tools/check_truth.py", "tools/build_real.py",
@@ -48,6 +50,13 @@ def problems():
         if name == "where-are-the-regions":
             regions_commit = digest
             continue
+        if name == "pdf-core":
+            core = subprocess.run(["git", "-C", str(PDF_CORE), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+            if digest != core:
+                out.append(f"pdf-core is at {core[:7] or '?'}, frozen at {digest[:7]}")
+            if subprocess.run(["git", "-C", str(PDF_CORE), "status", "--porcelain", "--", "src", "Cargo.toml"], capture_output=True, text=True).stdout.strip():
+                out.append("pdf-core has uncommitted changes")
+            continue
         recorded[name] = digest
         if not (ROOT / name).exists():
             out.append(f"MISSING {name}")
@@ -74,9 +83,10 @@ def require_frozen():
 
 if __name__ == "__main__":
     if "--write" in sys.argv:
-        lines = [f"{digest_of(n)}  {n}" for n in names()] + [f"{git('rev-parse', 'HEAD')}  where-are-the-regions"]
+        core = subprocess.run(["git", "-C", str(PDF_CORE), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+        lines = [f"{digest_of(n)}  {n}" for n in names()] + [f"{git('rev-parse', 'HEAD')}  where-are-the-regions", f"{core}  pdf-core"]
         RECORD.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        print(f"recorded {len(lines) - 1} files and where-are-the-regions at {git('rev-parse', '--short', 'HEAD')}")
+        print(f"recorded {len(lines) - 2} files, where-are-the-regions at {git('rev-parse', '--short', 'HEAD')} and pdf-core at {core[:7]}")
     p = problems()
     print("frozen source: ok" if not p else "frozen source: " + str(len(p)) + " problem(s)\n  " + "\n  ".join(p))
     sys.exit(1 if p else 0)
