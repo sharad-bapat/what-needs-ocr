@@ -35,6 +35,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
@@ -60,6 +61,9 @@ DPI_RANGE = (300, 400)
 MAX_PX = 32767
 STRIP_PX = 8000
 STRIP_OVERLAP = 36
+# crops rendered ahead of the workers, per worker: enough to keep them busy, few enough that memory stays
+# flat however many files are read
+IN_FLIGHT = 2
 
 
 def strips(box, dpi):
@@ -204,53 +208,64 @@ def main():
     version = tesseract_version()
     settings = "|".join([version, *ARGS]).encode()
 
-    # render every crop first (cheap), then read the ones not cached, several at a time
-    jobs, rows = [], []
-    for d in routes_of(files):
-        row = {"file": d["file"], "pages": []}
-        rows.append(row)
-        if d.get("status") != "ok":
-            row["status"] = d.get("status")
-            continue
-        with fitz.open(d["file"]) as doc:
-            for p in d["pages"]:
-                if picked is not None and (Path(d["file"]).name, p["n"]) not in picked:
-                    continue
-                crops = []
-                turn = turned(doc[p["n"] - 1])
-                routes = [{"source": "page", "decision": "ocr", "dpi": 0, "x0": 0, "y0": 0, "x1": p["width"], "y1": p["height"]}] if "pages" in flags else p["routes"]
-                for i, r in enumerate(routes):
-                    if r["decision"] != "ocr":
+    # Crops are rendered one at a time and handed to the workers as they come, across all the files, so
+    # the workers never wait on a file's rendering and a long file doesn't hold up the rest. At most
+    # IN_FLIGHT crops wait as PNGs in memory; each is dropped once Tesseract has read it. The same crop
+    # can come up twice in a run (an image drawn twice): it's read once, and the first occurrence carries
+    # the Tesseract time (two threads on one cache key once read a half-written file).
+    workers = int(opt.get("jobs", 4))
+    room = threading.BoundedSemaphore(IN_FLIGHT * workers)
+    jobs, rows, futures, cached = [], [], {}, 0
+    with Progress(*Progress.get_default_columns(), TimeElapsedColumn(), MofNCompleteColumn(), transient=True) as bar, \
+            ThreadPoolExecutor(max_workers=workers) as pool:
+        task = bar.add_task("tesseract", total=0)
+
+        def one(png, dpi, key):
+            try:
+                return read(png, dpi, key)
+            finally:
+                room.release()
+                bar.advance(task)
+
+        for d in routes_of(files):
+            row = {"file": d["file"], "pages": []}
+            rows.append(row)
+            if d.get("status") != "ok":
+                row["status"] = d.get("status")
+                continue
+            with fitz.open(d["file"]) as doc:
+                for p in d["pages"]:
+                    if picked is not None and (Path(d["file"]).name, p["n"]) not in picked:
                         continue
-                    dpi = round(min(max(r["dpi"], DPI_RANGE[0]), DPI_RANGE[1])) if r["source"] == "image" else TEXT_DPI
-                    for box, core, part in strips([r["x0"], r["y0"], r["x1"], r["y1"]], dpi):
-                        png, w, h, ox, oy, rot = crop(turn, box, dpi)
-                        key = hashlib.sha256(png + b"|" + settings + b"|" + str(dpi).encode()).hexdigest()[:24]
-                        c = {"route": i, "source": r["source"], "box": box, "dpi": dpi, "px": [w, h], "cache": key}
-                        if part:
-                            c["strip"] = part
-                        crops.append(c)
-                        jobs.append((c, png, ox, oy, rot, core))
-                row["pages"].append({"n": p["n"], "crops": crops})
-    # the same crop can come up twice in a run (an image drawn twice): it's read once, and the first
-    # occurrence carries the Tesseract time (two threads on one cache key once read a half-written file)
-    unique = {}
-    for c, png, *_ in jobs:
-        unique.setdefault(c["cache"], (png, c["dpi"]))
-    cached = sum(1 for k in unique if (CACHE / f"{k}.tsv").exists() and (CACHE / f"{k}.secs").exists())
-    results = {}
-    with Progress(*Progress.get_default_columns(), TimeElapsedColumn(), MofNCompleteColumn(), transient=True) as bar:
-        task = bar.add_task("tesseract", total=len(unique))
-
-        def one(item):
-            key, (png, dpi) = item
-            results[key] = read(png, dpi, key)
-            bar.advance(task)
-
-        with ThreadPoolExecutor(max_workers=int(opt.get("jobs", 4))) as pool:
-            list(pool.map(one, unique.items()))
+                    crops = []
+                    turn = turned(doc[p["n"] - 1])
+                    routes = [{"source": "page", "decision": "ocr", "dpi": 0, "x0": 0, "y0": 0, "x1": p["width"], "y1": p["height"]}] if "pages" in flags else p["routes"]
+                    for i, r in enumerate(routes):
+                        if r["decision"] != "ocr":
+                            continue
+                        dpi = round(min(max(r["dpi"], DPI_RANGE[0]), DPI_RANGE[1])) if r["source"] == "image" else TEXT_DPI
+                        for box, core, part in strips([r["x0"], r["y0"], r["x1"], r["y1"]], dpi):
+                            png, w, h, ox, oy, rot = crop(turn, box, dpi)
+                            key = hashlib.sha256(png + b"|" + settings + b"|" + str(dpi).encode()).hexdigest()[:24]
+                            c = {"route": i, "source": r["source"], "box": box, "dpi": dpi, "px": [w, h], "cache": key}
+                            if part:
+                                c["strip"] = part
+                            crops.append(c)
+                            jobs.append((c, ox, oy, rot, core))
+                            if key not in futures:
+                                cached += (CACHE / f"{key}.tsv").exists() and (CACHE / f"{key}.secs").exists()
+                                room.acquire()
+                                bar.update(task, total=len(futures) + 1)
+                                futures[key] = pool.submit(one, png, dpi, key)
+                            del png
+                    row["pages"].append({"n": p["n"], "crops": crops})
+            # MuPDF keeps decoded images in its store across files; emptied after each file so memory
+            # stays flat over a long list
+            fitz.TOOLS.store_shrink(100)
+        results = {k: f.result() for k, f in futures.items()}
+    unique = futures
     timed = set()
-    for c, png, ox, oy, rot, core in jobs:
+    for c, ox, oy, rot, core in jobs:
         tsv, took = results[c["cache"]]
         c["secs"] = 0.0 if c["cache"] in timed else took
         timed.add(c["cache"])

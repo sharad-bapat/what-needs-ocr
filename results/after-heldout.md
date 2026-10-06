@@ -71,3 +71,11 @@ Tesseract refuses an image more than 32,767 px on a side, and one refusal stoppe
 A crop that would pass the limit is now read in strips across its long side, at the same resolution: each at most 8,000 px long (`STRIP_PX`), overlapping the next by 36 pt (`STRIP_OVERLAP`). Each strip is a crop of its own in the output, marked `"strip": [k, n]`, and keeps only the words whose centres fall in its own share of the box, so a word in an overlap is counted once. The merge takes the strips as it takes any crop.
 
 A crop under the limit is cut and read as before. On a Sodir file with 186 crops, all under it, the output is byte for byte the same. The constructed set's longest page side is 843 pt, against 5,886 pt before a crop needs strips at 400 dpi, so no constructed result can change. On the 6-page log above, its two long pages now give 18 strips and 23,714 words, among them the lithology descriptions down the log. That file took 1,625 s of Tesseract time.
+
+## Crops streamed to Tesseract (6 October 2026)
+
+tools/ocr_crops.py rendered every crop of its whole file list before reading any, and kept every PNG in memory until the last was read. One file at a time that's harmless, but memory then grows with the length of the list, and the workers sit idle while rendering runs.
+
+Crops are now handed to the workers as they're rendered, across all the files in the list, with at most two per worker waiting (`IN_FLIGHT`); a PNG is dropped once Tesseract has read it. MuPDF's store of decoded images is emptied after each file. A crop that comes up twice is still read once, and its first occurrence still carries the Tesseract time.
+
+The output is byte for byte the same as before: on the constructed tune split (441 crops, 434 different, and again with --pages, 300 crops), and on the first 20 pages of 50 Sodir reports (1,000 crops, 184,660 words). On those 50 files, all read from the cache so that only rendering was timed, the peak memory went from 949 MB to 639 MB and the time from 295 s to 267 s. Sampled every half second, the new run's median was 157 MB; its peak was a short spike while one large scan was decoded, which the old run had too.
