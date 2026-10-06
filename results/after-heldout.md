@@ -63,3 +63,11 @@ The browser build after these changes (ac5a028) gives the same routes and merges
 ## The shared PDF reader (6 October 2026)
 
 where-are-the-regions now reads PDFs through [pdf-core](https://github.com/sharad-bapat/pdf-core), the parser it used to share by copy with scan-or-text and wordbox; its page map and image kinds came out identical on all 1,113 of its test files. The frozen record here now holds the pdf-core commit as well as where-are-the-regions', and routing on the tune split is unchanged.
+
+## Long crops read in strips (6 October 2026)
+
+Tesseract refuses an image more than 32,767 px on a side, and one refusal stopped tools/ocr_crops.py for the whole file. Scanned well logs reach that: in the Sodir sample, a completion log has pages 14,000 pt tall, 70,000 px at 360 dpi. In the first 20 pages of 324 Sodir reports, 10 files have such a page (17 pages), so all 10 lost every crop.
+
+A crop that would pass the limit is now read in strips across its long side, at the same resolution: each at most 8,000 px long (`STRIP_PX`), overlapping the next by 36 pt (`STRIP_OVERLAP`). Each strip is a crop of its own in the output, marked `"strip": [k, n]`, and keeps only the words whose centres fall in its own share of the box, so a word in an overlap is counted once. The merge takes the strips as it takes any crop.
+
+A crop under the limit is cut and read as before. On a Sodir file with 186 crops, all under it, the output is byte for byte the same. The constructed set's longest page side is 843 pt, against 5,886 pt before a crop needs strips at 400 dpi, so no constructed result can change. On the 6-page log above, its two long pages now give 18 strips and 23,714 words, among them the lithology descriptions down the log. That file took 1,625 s of Tesseract time.

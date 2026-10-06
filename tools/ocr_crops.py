@@ -9,6 +9,12 @@ Tesseract runs with OMP_THREAD_LIMIT=1, so the same crop always gives the same w
 cached under data/ocr-cache by a hash of the crop's PNG and the Tesseract settings: a rerun that renders
 the same crops calls Tesseract for none of them.
 
+Tesseract refuses an image more than 32,767 px on a side. A crop that would be longer (a well log can be
+14,000 pt tall, 70,000 px at 360 dpi) is read in strips across its long side, at the same resolution, each
+at most STRIP_PX long and overlapping the next by STRIP_OVERLAP points. Each strip is a crop of its own in
+the output (with "strip": [k, n]), and a word is kept only by the strip whose own share of the box holds
+the word's centre, so a word in an overlap is counted once. A crop under the limit is read as before.
+
 With --pages, each whole page is one crop instead (source "page", 300 dpi), whatever the router says:
 the baseline of OCR'ing every page, read the same way. Each crop's Tesseract time, in seconds, is kept
 next to its cached TSV; a crop cached before times were kept is read again to time it, and the new TSV
@@ -50,6 +56,40 @@ PAD = 6
 # an image is read at its own resolution, but at 300 dpi at least: Tesseract reads small type better scaled
 # up (on the constructed set, full scans read at their own 150 dpi lost to the same pages read at 300)
 DPI_RANGE = (300, 400)
+# Tesseract's limit on an image side, in pixels; longer crops are read in strips (see the docstring)
+MAX_PX = 32767
+STRIP_PX = 8000
+STRIP_OVERLAP = 36
+
+
+def strips(box, dpi):
+    """[(box, core, part)] for a route's box: itself alone when its crop fits Tesseract's limit (core and
+    part None), else strips across its long side. core is the (axis, lo, hi) share of the box whose word
+    centres the strip keeps; part is [k, n]."""
+    w, h = box[2] - box[0], box[3] - box[1]
+    if max(w, h) + 2 * PAD <= MAX_PX * 72 / dpi:
+        return [(box, None, None)]
+    axis = 1 if h >= w else 0  # the long side: y (1) or x (0)
+    lo, hi = box[axis], box[axis + 2]
+    n = -(-int((hi - lo) * dpi / 72) // STRIP_PX)
+    step = (hi - lo) / n
+    out = []
+    for k in range(n):
+        a, b = lo + k * step, lo + (k + 1) * step
+        sb = list(box)
+        sb[axis], sb[axis + 2] = max(lo, a - STRIP_OVERLAP), min(hi, b + STRIP_OVERLAP)
+        core = (axis, -float("inf") if k == 0 else a, float("inf") if k == n - 1 else b)
+        out.append(([round(v, 2) for v in sb], core, [k, n]))
+    return out
+
+
+def kept(word, core):
+    """A strip keeps a word whose centre lies in its own share of the box."""
+    if core is None:
+        return True
+    axis, lo, hi = core
+    centre = (word[axis] + word[axis + 2]) / 2
+    return lo <= centre < hi
 
 
 def tesseract_version():
@@ -183,12 +223,14 @@ def main():
                     if r["decision"] != "ocr":
                         continue
                     dpi = round(min(max(r["dpi"], DPI_RANGE[0]), DPI_RANGE[1])) if r["source"] == "image" else TEXT_DPI
-                    box = [r["x0"], r["y0"], r["x1"], r["y1"]]
-                    png, w, h, ox, oy, rot = crop(turn, box, dpi)
-                    key = hashlib.sha256(png + b"|" + settings + b"|" + str(dpi).encode()).hexdigest()[:24]
-                    c = {"route": i, "source": r["source"], "box": box, "dpi": dpi, "px": [w, h], "cache": key}
-                    crops.append(c)
-                    jobs.append((c, png, ox, oy, rot))
+                    for box, core, part in strips([r["x0"], r["y0"], r["x1"], r["y1"]], dpi):
+                        png, w, h, ox, oy, rot = crop(turn, box, dpi)
+                        key = hashlib.sha256(png + b"|" + settings + b"|" + str(dpi).encode()).hexdigest()[:24]
+                        c = {"route": i, "source": r["source"], "box": box, "dpi": dpi, "px": [w, h], "cache": key}
+                        if part:
+                            c["strip"] = part
+                        crops.append(c)
+                        jobs.append((c, png, ox, oy, rot, core))
                 row["pages"].append({"n": p["n"], "crops": crops})
     # the same crop can come up twice in a run (an image drawn twice): it's read once, and the first
     # occurrence carries the Tesseract time (two threads on one cache key once read a half-written file)
@@ -208,7 +250,7 @@ def main():
         with ThreadPoolExecutor(max_workers=int(opt.get("jobs", 4))) as pool:
             list(pool.map(one, unique.items()))
     timed = set()
-    for c, png, ox, oy, rot in jobs:
+    for c, png, ox, oy, rot, core in jobs:
         tsv, took = results[c["cache"]]
         c["secs"] = 0.0 if c["cache"] in timed else took
         timed.add(c["cache"])
@@ -217,6 +259,7 @@ def main():
             for w in c["words"]:
                 r = fitz.Rect(w[:4]) * rot
                 w[:4] = [round(r.x0, 2), round(r.y0, 2), round(r.x1, 2), round(r.y1, 2)]
+        c["words"] = [w for w in c["words"] if kept(w, core)]
     Path(opt["out"]).write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n", encoding="utf-8")
     words = sum(len(c["words"]) for c, *_ in jobs)
     secs = sum(c["secs"] for c, *_ in jobs)
