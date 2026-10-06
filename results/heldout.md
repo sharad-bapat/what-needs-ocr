@@ -1,6 +1,6 @@
 # Held-out runs
 
-The router, the tools and the set manifests were frozen at 2f9ff66 (results/frozen.sha256, with where-are-the-regions pinned at 57ef3a5), and tools/check_frozen.py passed before each run below. Each run was made once. The targets were fixed in the plan before any held-out data was used.
+The router, the tools and the set manifests were frozen at 9cef13b (results/frozen.sha256, with where-are-the-regions pinned at 57ef3a5), and tools/check_frozen.py passed before each run below. Each run was made once. The targets were fixed in the plan before any held-out data was used.
 
 ## 1. Routing on the constructed held-out split (4 October 2026)
 
@@ -37,7 +37,7 @@ The target was word error no more than a point worse than OCR'ing every page: th
 
 636 pages from 235 files of thread 006, each with a usable text layer, 425 with images or drawings (data/real/006.json, built before any run and not looked at beyond its summary). The truth is the reference tools/build_real.py made without the router, so these numbers are agreement with it, not accuracy (results/real-reference-check.md: where the reference has a word it's right about 92% of the time, and it misses many small labels on maps and charts).
 
-The first run of tools/ocr_crops.py --real=006 stopped with an error before writing anything: when the same crop came up twice in one run, two threads shared a cache entry and one read the other's half-written time file. The fix (9b161fe) reads each distinct crop once and writes the cache through temporary files; it changes no OCR word (the tune split's output from the cache was identical crop by crop, and only the time counted twice for duplicates went, 317 to 315 seconds). The source was relocked (14fdcaa) and the run made again; the every-page run had finished under the old code, which has no duplicate crops to race on, and was kept.
+The first run of tools/ocr_crops.py --real=006 stopped with an error before writing anything: when the same crop came up twice in one run, two threads shared a cache entry and one read the other's half-written time file. The fix (149913b) reads each distinct crop once and writes the cache through temporary files; it changes no OCR word (the tune split's output from the cache was identical crop by crop, and only the time counted twice for duplicates went, 317 to 315 seconds). The source was relocked (230ef7e) and the run made again; the every-page run had finished under the old code, which has no duplicate crops to race on, and was kept.
 
 | Method | Recall | Precision | Word error | Recall of pixel-only words | Page area OCR'd | Megapixels | Tesseract calls | Tesseract seconds |
 |---|---|---|---|---|---|---|---|---|
